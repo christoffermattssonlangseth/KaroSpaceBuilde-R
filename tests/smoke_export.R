@@ -13,6 +13,7 @@ obs <- data.frame(
   course = rep(c("naive", "peak", "recovery"), each = 20),
   stringsAsFactors = FALSE
 )
+rownames(obs) <- sprintf("cell_%03d", seq_len(n_cells))
 
 coords <- cbind(
   x = stats::rnorm(n_cells),
@@ -38,18 +39,31 @@ toy <- list(
   expression = expr
 )
 
+cluster_meta <- data.frame(
+  seurat_clusters = rep(c("0", "1", "2"), length.out = n_cells),
+  stringsAsFactors = FALSE,
+  row.names = rownames(obs)
+)
+merged_toy <- merge_external_metadata(
+  primary = toy,
+  secondary = cluster_meta,
+  columns = c("seurat_clusters")
+)
+stopifnot("seurat_clusters" %in% names(merged_toy$obs))
+stopifnot(identical(merged_toy$obs$seurat_clusters[1:3], c("0", "1", "2")))
+
 payload <- build_viewer_payload(
-  input = toy,
+  input = merged_toy,
   groupby = "sample_id",
   initial_color = "cell_type",
-  additional_colors = c("course"),
+  additional_colors = c("course", "seurat_clusters"),
   genes = c("Gene01", "Gene02"),
   metadata_columns = c("course")
 )
 
 stopifnot(payload$n_sections == 3L)
 stopifnot(payload$total_cells == n_cells)
-stopifnot(identical(unlist(payload$available_colors, use.names = FALSE), c("cell_type", "course")))
+stopifnot(identical(unlist(payload$available_colors, use.names = FALSE), c("cell_type", "course", "seurat_clusters")))
 stopifnot(identical(unlist(payload$available_genes, use.names = FALSE), c("Gene01", "Gene02")))
 stopifnot(isTRUE(payload$has_umap))
 stopifnot(identical(names(payload$genes_meta), c("Gene01", "Gene02")))

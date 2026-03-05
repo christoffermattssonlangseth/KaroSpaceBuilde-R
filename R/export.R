@@ -134,6 +134,9 @@ export_karospace_viewer <- function(
   additional_colors = NULL,
   genes = NULL,
   assay = NULL,
+  metadata_input = NULL,
+  metadata_input_columns = NULL,
+  metadata_prefix = NULL,
   metadata_columns = NULL,
   outline_by = NULL,
   title = "KaroSpace",
@@ -150,6 +153,9 @@ export_karospace_viewer <- function(
     additional_colors = additional_colors,
     genes = genes,
     assay = assay,
+    metadata_input = metadata_input,
+    metadata_input_columns = metadata_input_columns,
+    metadata_prefix = metadata_prefix,
     metadata_columns = metadata_columns,
     outline_by = outline_by
   )

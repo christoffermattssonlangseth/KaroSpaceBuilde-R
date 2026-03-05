@@ -5,11 +5,19 @@ build_viewer_payload <- function(
   additional_colors = NULL,
   genes = NULL,
   assay = NULL,
+  metadata_input = NULL,
+  metadata_input_columns = NULL,
+  metadata_prefix = NULL,
   metadata_columns = NULL,
   outline_by = NULL
 ) {
   source <- normalize_input_source(
-    x = read_karospace_source(input),
+    x = prepare_karospace_input(
+      input = input,
+      metadata_input = metadata_input,
+      metadata_input_columns = metadata_input_columns,
+      metadata_prefix = metadata_prefix
+    ),
     groupby = groupby,
     initial_color = initial_color,
     additional_colors = additional_colors,

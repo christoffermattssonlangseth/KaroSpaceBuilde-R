@@ -35,6 +35,155 @@ read_karospace_source <- function(input) {
   input
 }
 
+prepare_karospace_input <- function(
+  input,
+  metadata_input = NULL,
+  metadata_input_columns = NULL,
+  metadata_prefix = NULL
+) {
+  obj <- read_karospace_source(input)
+  if (is.null(metadata_input)) {
+    return(obj)
+  }
+
+  metadata_obj <- read_karospace_source(metadata_input)
+  merge_external_metadata(
+    primary = obj,
+    secondary = metadata_obj,
+    columns = metadata_input_columns,
+    prefix = metadata_prefix
+  )
+}
+
+extract_metadata_table <- function(x) {
+  if (inherits(x, "Seurat")) {
+    obs <- augment_seurat_obs(x)
+    ids <- tryCatch(SeuratObject::Idents(x), error = function(err) NULL)
+    if (!is.null(ids) && length(unique_non_missing(ids)) > 1L && !("active_ident" %in% names(obs))) {
+      obs$active_ident <- as.character(ids)
+    }
+    return(obs)
+  }
+
+  if (inherits(x, "SpatialExperiment") || inherits(x, "SingleCellExperiment")) {
+    if (!requireNamespace("SummarizedExperiment", quietly = TRUE)) {
+      stop("SummarizedExperiment is required to extract metadata from this object.")
+    }
+    return(as.data.frame(SummarizedExperiment::colData(x)))
+  }
+
+  if (is.list(x) && is.data.frame(x$obs)) {
+    return(x$obs)
+  }
+
+  if (is.data.frame(x)) {
+    return(x)
+  }
+
+  stop(
+    "Could not extract metadata from input class: ",
+    paste(class(x), collapse = ", ")
+  )
+}
+
+assign_metadata_table <- function(x, obs) {
+  if (inherits(x, "Seurat")) {
+    x@meta.data <- obs
+    return(x)
+  }
+
+  if (inherits(x, "SpatialExperiment") || inherits(x, "SingleCellExperiment")) {
+    if (!requireNamespace("SummarizedExperiment", quietly = TRUE) ||
+        !requireNamespace("S4Vectors", quietly = TRUE)) {
+      stop("SummarizedExperiment and S4Vectors are required to assign metadata to this object.")
+    }
+    SummarizedExperiment::colData(x) <- S4Vectors::DataFrame(obs)
+    return(x)
+  }
+
+  if (is.list(x)) {
+    x$obs <- obs
+    return(x)
+  }
+
+  if (is.data.frame(x)) {
+    return(obs)
+  }
+
+  stop(
+    "Could not assign metadata back to input class: ",
+    paste(class(x), collapse = ", ")
+  )
+}
+
+merge_external_metadata <- function(primary, secondary, columns = NULL, prefix = NULL) {
+  primary_obs <- extract_metadata_table(primary)
+  secondary_obs <- extract_metadata_table(secondary)
+
+  primary_ids <- rownames(primary_obs)
+  secondary_ids <- rownames(secondary_obs)
+  if (is.null(primary_ids) || length(primary_ids) == 0) {
+    stop("Primary input metadata must have row names for metadata merging.")
+  }
+  if (is.null(secondary_ids) || length(secondary_ids) == 0) {
+    stop("Secondary metadata input must have row names for metadata merging.")
+  }
+
+  overlap_ids <- intersect(primary_ids, secondary_ids)
+  if (length(overlap_ids) == 0) {
+    stop("No overlapping row names found between primary input and metadata input.")
+  }
+
+  merge_columns <- colnames(secondary_obs)
+  if (!is.null(columns) && length(columns) > 0) {
+    columns <- as.character(columns)
+    missing_columns <- setdiff(columns, merge_columns)
+    if (length(missing_columns) > 0) {
+      warning(
+        "Dropping missing metadata_input columns: ",
+        paste(missing_columns, collapse = ", "),
+        call. = FALSE
+      )
+    }
+    merge_columns <- intersect(columns, merge_columns)
+  }
+
+  if (length(merge_columns) == 0) {
+    stop("No metadata columns available to merge from metadata input.")
+  }
+
+  idx <- match(primary_ids, secondary_ids)
+  aligned <- secondary_obs[idx, merge_columns, drop = FALSE]
+  rownames(aligned) <- primary_ids
+
+  merged <- primary_obs
+  skipped_columns <- character()
+  added_columns <- character()
+  for (column_name in merge_columns) {
+    target_name <- column_name
+    if (target_name %in% names(merged)) {
+      if (is.null(prefix) || !nzchar(prefix)) {
+        skipped_columns <- c(skipped_columns, column_name)
+        next
+      }
+      target_name <- make.unique(c(names(merged), paste0(prefix, column_name)))[length(names(merged)) + 1L]
+    }
+    merged[[target_name]] <- aligned[[column_name]]
+    added_columns <- c(added_columns, target_name)
+  }
+
+  if (length(skipped_columns) > 0) {
+    warning(
+      "Skipping metadata_input columns already present in the primary input: ",
+      paste(skipped_columns, collapse = ", "),
+      ". Pass metadata_prefix to keep both versions.",
+      call. = FALSE
+    )
+  }
+
+  assign_metadata_table(primary, merged)
+}
+
 normalize_input_source <- function(
   x,
   groupby,

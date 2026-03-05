@@ -40,6 +40,7 @@ if (isTRUE(options$help) || is.null(options$input)) {
       "Usage:",
       "Rscript scripts/example_export.R --input path/to/object.rds [--output viewer.html]",
       "[--groupby sample_id] [--initial-color cell_type] [--additional-colors course,condition]",
+      "[--metadata-input other_object.rds] [--metadata-input-columns col1,col2] [--metadata-prefix ext_]",
       "[--assay SCT] [--genes GENE1,GENE2] [--inspect] [--inspect-genes]",
       "[--gene-query COL] [--gene-limit 50] [--title MyViewer] [--theme light]",
       sep = "\n"
@@ -260,7 +261,13 @@ format_gene_preview <- function(gene_names, limit = 50L) {
 }
 
 input_path <- normalizePath(options$input, mustWork = TRUE)
-obj <- read_karospace_source(input_path)
+metadata_input_path <- options[["metadata-input"]]
+obj <- prepare_karospace_input(
+  input = input_path,
+  metadata_input = metadata_input_path,
+  metadata_input_columns = split_csv(options[["metadata-input-columns"]]),
+  metadata_prefix = options[["metadata-prefix"]]
+)
 obs <- extract_obs(obj)
 available_assays <- extract_assay_names(obj)
 
@@ -283,6 +290,14 @@ title <- options$title %||% tools::file_path_sans_ext(basename(input_path))
 theme <- options$theme %||% "light"
 
 cat("Input: ", input_path, "\n", sep = "")
+if (!is.null(metadata_input_path) && nzchar(metadata_input_path)) {
+  cat(
+    "Metadata input: ",
+    normalizePath(metadata_input_path, mustWork = TRUE),
+    "\n",
+    sep = ""
+  )
+}
 cat("Detected groupby: ", groupby, "\n", sep = "")
 cat("Detected initial color: ", initial_color, "\n", sep = "")
 cat("Assay: ", assay_name %||% "<none>", "\n", sep = "")
@@ -354,6 +369,9 @@ export_karospace_viewer(
   additional_colors = additional_colors,
   genes = split_csv(options$genes),
   assay = assay_name,
+  metadata_input = NULL,
+  metadata_input_columns = NULL,
+  metadata_prefix = NULL,
   metadata_columns = split_csv(options[["metadata-columns"]]),
   outline_by = options[["outline-by"]],
   title = title,
