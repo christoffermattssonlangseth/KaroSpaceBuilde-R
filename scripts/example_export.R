@@ -108,6 +108,67 @@ is_color_candidate <- function(column) {
   is.factor(column) || is.character(column) || is.logical(column) || is.numeric(column)
 }
 
+column_coverage <- function(column) {
+  fraction_non_missing_values(column)
+}
+
+format_percentage <- function(x) {
+  sprintf("%.1f%%", 100 * x)
+}
+
+format_column_coverage <- function(obs, columns, max_columns = 8L) {
+  columns <- intersect(as.character(columns %||% character()), names(obs))
+  if (length(columns) == 0L) {
+    return("<none>")
+  }
+
+  coverage <- vapply(columns, function(column_name) {
+    column_coverage(obs[[column_name]])
+  }, numeric(1))
+  order_idx <- order(coverage, columns, decreasing = TRUE)
+  columns <- columns[order_idx]
+  coverage <- coverage[order_idx]
+
+  limit <- min(length(columns), max_columns)
+  preview <- sprintf("%s %s", columns[seq_len(limit)], format_percentage(coverage[seq_len(limit)]))
+  paste(preview, collapse = ", ")
+}
+
+report_metadata_merge <- function(obj, obs) {
+  report <- extract_metadata_merge_report(obj)
+  if (is.null(report)) {
+    return(invisible(NULL))
+  }
+
+  cat(
+    "Metadata overlap: ",
+    report$overlap_rows,
+    "/",
+    report$primary_rows,
+    " rows (",
+    format_percentage(report$overlap_fraction),
+    ")\n",
+    sep = ""
+  )
+
+  coverage_table <- report$column_coverage
+  if (!is.data.frame(coverage_table) || nrow(coverage_table) == 0L) {
+    return(invisible(report))
+  }
+
+  partial <- coverage_table[coverage_table$coverage < 0.999999, , drop = FALSE]
+  if (nrow(partial) > 0L) {
+    cat(
+      "Partially annotated merged columns: ",
+      format_column_coverage(obs, partial$column),
+      "\n",
+      sep = ""
+    )
+  }
+
+  invisible(report)
+}
+
 is_groupby_candidate <- function(column) {
   values <- unique_non_missing(column)
   n_unique <- length(values)
@@ -160,6 +221,7 @@ detect_groupby <- function(obs) {
 }
 
 detect_initial_color <- function(obs, groupby) {
+  min_coverage <- 0.9
   all_candidates <- setdiff(names(obs)[vapply(obs, is_color_candidate, logical(1))], groupby)
   lower_names <- tolower(all_candidates)
   is_coord_like <- lower_names %in% c(
@@ -181,6 +243,18 @@ detect_initial_color <- function(obs, groupby) {
     return(groupby)
   }
 
+  coverage <- vapply(obs[candidates], column_coverage, numeric(1))
+  high_coverage_candidates <- candidates[coverage[candidates] >= min_coverage]
+  if (length(high_coverage_candidates) == 0L &&
+      (is.factor(obs[[groupby]]) || is.character(obs[[groupby]]) || is.logical(obs[[groupby]]))) {
+    return(groupby)
+  }
+  if (length(high_coverage_candidates) > 0L) {
+    candidates <- high_coverage_candidates
+  } else {
+    candidates <- candidates[order(coverage[candidates], candidates, decreasing = TRUE)]
+  }
+
   categorical_candidates <- candidates[vapply(obs[candidates], function(column) {
     is.factor(column) || is.character(column) || is.logical(column)
   }, logical(1))]
@@ -191,17 +265,13 @@ detect_initial_color <- function(obs, groupby) {
     "leiden", "seurat_clusters", "subclass", "class"
   )
 
-  if (length(categorical_candidates) == 0L &&
-      (is.factor(obs[[groupby]]) || is.character(obs[[groupby]]) || is.logical(obs[[groupby]]))) {
-    return(groupby)
-  }
-
   pick_preferred_column(categorical_candidates, preferred) %||%
     pick_preferred_column(candidates, preferred) %||%
     if (length(categorical_candidates) > 0L) categorical_candidates[[1L]] else candidates[[1L]]
 }
 
 detect_additional_colors <- function(obs, groupby, initial_color) {
+  min_coverage <- 0.9
   candidates <- setdiff(names(obs)[vapply(obs, is_color_candidate, logical(1))], c(groupby, initial_color))
   if (length(candidates) == 0L) {
     return(NULL)
@@ -212,6 +282,14 @@ detect_additional_colors <- function(obs, groupby, initial_color) {
   }, logical(1))]
   if (length(candidates) == 0L) {
     return(NULL)
+  }
+
+  coverage <- vapply(obs[candidates], column_coverage, numeric(1))
+  high_coverage_candidates <- candidates[coverage[candidates] >= min_coverage]
+  if (length(high_coverage_candidates) > 0L) {
+    candidates <- high_coverage_candidates
+  } else {
+    candidates <- candidates[order(coverage[candidates], candidates, decreasing = TRUE)]
   }
 
   categorical <- candidates[vapply(obs[candidates], function(column) {
@@ -270,6 +348,7 @@ obj <- prepare_karospace_input(
 )
 obs <- extract_obs(obj)
 available_assays <- extract_assay_names(obj)
+merge_report <- report_metadata_merge(obj, obs)
 
 groupby <- options$groupby %||% detect_groupby(obs)
 initial_color <- options[["initial-color"]] %||% detect_initial_color(obs, groupby)
@@ -332,6 +411,21 @@ cat(
   "\n",
   sep = ""
 )
+
+if (!is.null(merge_report) && is.null(options[["initial-color"]])) {
+  low_coverage_merged <- merge_report$column_coverage$column[
+    merge_report$column_coverage$coverage < 0.9
+  ]
+  low_coverage_merged <- intersect(low_coverage_merged, setdiff(names(obs)[vapply(obs, is_color_candidate, logical(1))], groupby))
+  if (length(low_coverage_merged) > 0L) {
+    cat(
+      "Low-coverage merged color columns skipped from defaults: ",
+      format_column_coverage(obs, low_coverage_merged),
+      "\n",
+      sep = ""
+    )
+  }
+}
 
 if (isTRUE(options$inspect) || isTRUE(options[["inspect-genes"]])) {
   gene_limit <- suppressWarnings(as.integer(options[["gene-limit"]] %||% 50L))

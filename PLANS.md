@@ -40,8 +40,8 @@ Goal: Achieve feature parity between the R export pipeline and the Python pipeli
 - The same object exports with sensible defaults and minimal manual flags.
 
 ### Remaining Polish
-- [ ] Tighten default color selection for partial external-metadata merges.
-- [ ] Add clearer export-time reporting of annotation coverage for partially annotated datasets.
+- [x] Tighten default color selection for partial external-metadata merges.
+- [x] Add clearer export-time reporting of annotation coverage for partially annotated datasets.
 
 ---
 
@@ -94,7 +94,7 @@ Goal: Achieve feature parity between the R export pipeline and the Python pipeli
 ## Status
 
 - Phase 1: ✅ Complete  
-- Phase 2: 🟨 Mostly complete; core tasks are done, remaining work is edge-case polish  
+- Phase 2: ✅ Complete  
 - Phase 3: ⬜ Not started  
 - Phase 4: ⬜ Not started  
 - Phase 5: ⬜ Not started

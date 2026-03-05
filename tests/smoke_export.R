@@ -46,11 +46,20 @@ cluster_meta <- data.frame(
 )
 merged_toy <- merge_external_metadata(
   primary = toy,
-  secondary = cluster_meta,
+  secondary = cluster_meta[seq_len(n_cells / 2), , drop = FALSE],
   columns = c("seurat_clusters")
 )
 stopifnot("seurat_clusters" %in% names(merged_toy$obs))
 stopifnot(identical(merged_toy$obs$seurat_clusters[1:3], c("0", "1", "2")))
+merge_report <- extract_metadata_merge_report(merged_toy)
+stopifnot(merge_report$overlap_rows == n_cells / 2)
+stopifnot(merge_report$primary_rows == n_cells)
+stopifnot(identical(merge_report$added_columns, c("seurat_clusters")))
+reported_coverage <- merge_report$column_coverage$coverage[
+  merge_report$column_coverage$column == "seurat_clusters"
+]
+expected_coverage <- count_non_missing_values(merged_toy$obs$seurat_clusters) / n_cells
+stopifnot(isTRUE(all.equal(reported_coverage, expected_coverage)))
 
 payload <- build_viewer_payload(
   input = merged_toy,

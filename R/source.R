@@ -55,6 +55,27 @@ prepare_karospace_input <- function(
   )
 }
 
+count_non_missing_values <- function(x) {
+  if (is.factor(x) || is.character(x) || is.logical(x)) {
+    values <- as.character(x)
+    return(sum(!is.na(values) & nzchar(values)))
+  }
+
+  if (is.numeric(x)) {
+    return(sum(is.finite(x)))
+  }
+
+  sum(!is.na(x))
+}
+
+fraction_non_missing_values <- function(x) {
+  total <- length(x)
+  if (total == 0L) {
+    return(0)
+  }
+  count_non_missing_values(x) / total
+}
+
 extract_metadata_table <- function(x) {
   if (inherits(x, "Seurat")) {
     obs <- augment_seurat_obs(x)
@@ -114,6 +135,37 @@ assign_metadata_table <- function(x, obs) {
     "Could not assign metadata back to input class: ",
     paste(class(x), collapse = ", ")
   )
+}
+
+attach_metadata_merge_report <- function(x, report) {
+  if (inherits(x, "Seurat") && "misc" %in% slotNames(x)) {
+    x@misc$karospace_metadata_merge_report <- report
+    return(x)
+  }
+
+  if ((inherits(x, "SpatialExperiment") || inherits(x, "SingleCellExperiment")) &&
+      requireNamespace("SummarizedExperiment", quietly = TRUE)) {
+    meta <- SummarizedExperiment::metadata(x)
+    meta$karospace_metadata_merge_report <- report
+    SummarizedExperiment::metadata(x) <- meta
+    return(x)
+  }
+
+  attr(x, "karospace_metadata_merge_report") <- report
+  x
+}
+
+extract_metadata_merge_report <- function(x) {
+  if (inherits(x, "Seurat") && "misc" %in% slotNames(x)) {
+    return(x@misc$karospace_metadata_merge_report %||% NULL)
+  }
+
+  if ((inherits(x, "SpatialExperiment") || inherits(x, "SingleCellExperiment")) &&
+      requireNamespace("SummarizedExperiment", quietly = TRUE)) {
+    return(SummarizedExperiment::metadata(x)$karospace_metadata_merge_report %||% NULL)
+  }
+
+  attr(x, "karospace_metadata_merge_report") %||% NULL
 }
 
 merge_external_metadata <- function(primary, secondary, columns = NULL, prefix = NULL) {
@@ -181,7 +233,41 @@ merge_external_metadata <- function(primary, secondary, columns = NULL, prefix =
     )
   }
 
-  assign_metadata_table(primary, merged)
+  report <- list(
+    primary_rows = length(primary_ids),
+    secondary_rows = length(secondary_ids),
+    overlap_rows = length(overlap_ids),
+    overlap_fraction = length(overlap_ids) / length(primary_ids),
+    requested_columns = as.character(columns %||% character()),
+    added_columns = added_columns,
+    skipped_columns = skipped_columns,
+    column_coverage = if (length(added_columns) == 0) {
+      data.frame(
+        column = character(),
+        non_missing = integer(),
+        total = integer(),
+        coverage = numeric(),
+        stringsAsFactors = FALSE
+      )
+    } else {
+      data.frame(
+        column = added_columns,
+        non_missing = vapply(added_columns, function(column_name) {
+          count_non_missing_values(merged[[column_name]])
+        }, integer(1)),
+        total = rep.int(length(primary_ids), length(added_columns)),
+        coverage = vapply(added_columns, function(column_name) {
+          fraction_non_missing_values(merged[[column_name]])
+        }, numeric(1)),
+        stringsAsFactors = FALSE
+      )
+    }
+  )
+
+  attach_metadata_merge_report(
+    x = assign_metadata_table(primary, merged),
+    report = report
+  )
 }
 
 normalize_input_source <- function(
