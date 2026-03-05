@@ -277,6 +277,9 @@ normalize_input_source <- function(
   additional_colors = NULL,
   genes = NULL,
   assay = NULL,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L,
   metadata_columns = NULL,
   outline_by = NULL
 ) {
@@ -288,6 +291,9 @@ normalize_input_source <- function(
       additional_colors = additional_colors,
       genes = genes,
       assay = assay,
+      neighbor_mode = neighbor_mode,
+      neighbor_graph = neighbor_graph,
+      neighbor_k = neighbor_k,
       metadata_columns = metadata_columns,
       outline_by = outline_by
     ))
@@ -301,6 +307,9 @@ normalize_input_source <- function(
       additional_colors = additional_colors,
       genes = genes,
       assay = assay,
+      neighbor_mode = neighbor_mode,
+      neighbor_graph = neighbor_graph,
+      neighbor_k = neighbor_k,
       metadata_columns = metadata_columns,
       outline_by = outline_by
     ))
@@ -314,6 +323,9 @@ normalize_input_source <- function(
       additional_colors = additional_colors,
       genes = genes,
       assay = assay,
+      neighbor_mode = neighbor_mode,
+      neighbor_graph = neighbor_graph,
+      neighbor_k = neighbor_k,
       metadata_columns = metadata_columns,
       outline_by = outline_by
     ))
@@ -327,6 +339,9 @@ normalize_input_source <- function(
       additional_colors = additional_colors,
       genes = genes,
       assay = assay,
+      neighbor_mode = neighbor_mode,
+      neighbor_graph = neighbor_graph,
+      neighbor_k = neighbor_k,
       metadata_columns = metadata_columns,
       outline_by = outline_by
     ))
@@ -346,6 +361,9 @@ normalize_seurat_object <- function(
   additional_colors = NULL,
   genes = NULL,
   assay = NULL,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L,
   metadata_columns = NULL,
   outline_by = NULL
 ) {
@@ -382,6 +400,17 @@ normalize_seurat_object <- function(
     requested_assay = assay
   )
 
+  neighbor_info <- resolve_seurat_neighbor_info(
+    x = x,
+    obs = obs,
+    cell_names = cell_names,
+    coords = coords,
+    groupby = groupby,
+    neighbor_mode = neighbor_mode,
+    neighbor_graph = neighbor_graph,
+    neighbor_k = neighbor_k
+  )
+
   normalize_list_source(
     x = list(
       obs = obs,
@@ -389,13 +418,18 @@ normalize_seurat_object <- function(
       umap = umap,
       expression = expression_info$expression,
       gene_names = expression_info$gene_names,
-      expression_assay = expression_info$assay_name
+      expression_assay = expression_info$assay_name,
+      neighbor_edges_by_section = neighbor_info$section_edges,
+      neighbors_key = neighbor_info$key
     ),
     groupby = groupby,
     initial_color = initial_color,
     additional_colors = additional_colors,
     genes = genes,
     assay = expression_info$assay_name,
+    neighbor_mode = neighbor_mode,
+    neighbor_graph = neighbor_graph,
+    neighbor_k = neighbor_k,
     metadata_columns = metadata_columns,
     outline_by = outline_by
   )
@@ -649,6 +683,9 @@ normalize_single_cell_experiment <- function(
   additional_colors = NULL,
   genes = NULL,
   assay = NULL,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L,
   metadata_columns = NULL,
   outline_by = NULL
 ) {
@@ -697,6 +734,9 @@ normalize_single_cell_experiment <- function(
     additional_colors = additional_colors,
     genes = genes,
     assay = expression_info$assay_name,
+    neighbor_mode = neighbor_mode,
+    neighbor_graph = neighbor_graph,
+    neighbor_k = neighbor_k,
     metadata_columns = metadata_columns,
     outline_by = outline_by
   )
@@ -709,6 +749,9 @@ normalize_spatial_experiment <- function(
   additional_colors = NULL,
   genes = NULL,
   assay = NULL,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L,
   metadata_columns = NULL,
   outline_by = NULL
 ) {
@@ -751,6 +794,9 @@ normalize_spatial_experiment <- function(
     additional_colors = additional_colors,
     genes = genes,
     assay = expression_info$assay_name,
+    neighbor_mode = neighbor_mode,
+    neighbor_graph = neighbor_graph,
+    neighbor_k = neighbor_k,
     metadata_columns = metadata_columns,
     outline_by = outline_by
   )
@@ -763,6 +809,9 @@ normalize_list_source <- function(
   additional_colors = NULL,
   genes = NULL,
   assay = NULL,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L,
   metadata_columns = NULL,
   outline_by = NULL
 ) {
@@ -816,6 +865,16 @@ normalize_list_source <- function(
     cell_names = rownames(obs)
   )
 
+  neighbor_info <- resolve_list_neighbor_info(
+    x = x,
+    obs = obs,
+    coords = coords,
+    groupby = groupby,
+    neighbor_mode = neighbor_mode,
+    neighbor_graph = neighbor_graph,
+    neighbor_k = neighbor_k
+  )
+
   list(
     obs = obs,
     coords = coords,
@@ -835,8 +894,365 @@ normalize_list_source <- function(
       groupby = groupby,
       metadata_columns = metadata_columns
     ),
+    section_edges = neighbor_info$section_edges,
+    neighbors_key = neighbor_info$key,
     outline_by = outline_by
   )
+}
+
+resolve_seurat_neighbor_info <- function(
+  x,
+  obs,
+  cell_names,
+  coords,
+  groupby,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L
+) {
+  mode <- normalize_neighbor_mode(neighbor_mode)
+  if (identical(mode, "none")) {
+    return(empty_neighbor_info())
+  }
+
+  if (!groupby %in% names(obs)) {
+    stop("groupby column not found in obs: ", groupby)
+  }
+
+  if (mode %in% c("auto", "existing")) {
+    graph_info <- resolve_seurat_graph_neighbor_info(
+      x = x,
+      cell_names = cell_names,
+      group_values = obs[[groupby]],
+      requested_graph = neighbor_graph
+    )
+    if (has_neighbor_edges(graph_info$section_edges)) {
+      return(graph_info)
+    }
+    if (identical(mode, "existing")) {
+      return(graph_info)
+    }
+  }
+
+  derive_spatial_neighbor_info(
+    coords = coords,
+    group_values = obs[[groupby]],
+    neighbor_k = neighbor_k
+  )
+}
+
+resolve_list_neighbor_info <- function(
+  x,
+  obs,
+  coords,
+  groupby,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L
+) {
+  mode <- normalize_neighbor_mode(neighbor_mode)
+  if (identical(mode, "none")) {
+    return(empty_neighbor_info())
+  }
+
+  precomputed <- normalize_precomputed_section_edges(
+    section_edges = x$neighbor_edges_by_section %||% x$section_edges %||% NULL
+  )
+  if (has_neighbor_edges(precomputed)) {
+    return(list(
+      section_edges = precomputed,
+      key = x$neighbors_key %||% neighbor_graph %||% "provided"
+    ))
+  }
+  if (identical(mode, "existing")) {
+    return(empty_neighbor_info())
+  }
+
+  derive_spatial_neighbor_info(
+    coords = coords,
+    group_values = obs[[groupby]],
+    neighbor_k = neighbor_k
+  )
+}
+
+empty_neighbor_info <- function() {
+  list(
+    section_edges = empty_named_list(),
+    key = NULL
+  )
+}
+
+normalize_neighbor_mode <- function(neighbor_mode = "spatial") {
+  mode <- tolower(as.character(neighbor_mode %||% "spatial")[[1]])
+  if (!(mode %in% c("auto", "existing", "spatial", "none"))) {
+    stop(
+      "Unsupported neighbor_mode: ",
+      neighbor_mode,
+      ". Expected one of auto, existing, spatial, none."
+    )
+  }
+  mode
+}
+
+has_neighbor_edges <- function(section_edges) {
+  if (is.null(section_edges) || length(section_edges) == 0) {
+    return(FALSE)
+  }
+  any(vapply(section_edges, length, integer(1)) > 0L)
+}
+
+normalize_precomputed_section_edges <- function(section_edges) {
+  if (is.null(section_edges) || length(section_edges) == 0) {
+    return(empty_named_list())
+  }
+
+  out <- vector("list", length(section_edges))
+  names(out) <- names(section_edges)
+  for (i in seq_along(section_edges)) {
+    edges <- section_edges[[i]]
+    if (is.null(edges) || length(edges) == 0) {
+      out[[i]] <- integer()
+      next
+    }
+    if (is.matrix(edges) || is.data.frame(edges)) {
+      edge_matrix <- as.matrix(edges)
+      if (ncol(edge_matrix) < 2) {
+        stop("Precomputed section edge matrices must have at least two columns.")
+      }
+      out[[i]] <- as.integer(as.vector(t(edge_matrix[, seq_len(2), drop = FALSE])))
+      next
+    }
+    out[[i]] <- as.integer(edges)
+  }
+  out
+}
+
+resolve_seurat_graph_neighbor_info <- function(
+  x,
+  cell_names,
+  group_values,
+  requested_graph = NULL
+) {
+  graph_names <- names(x@graphs)
+  if (length(graph_names) == 0) {
+    if (!is.null(requested_graph) && nzchar(requested_graph)) {
+      stop("Requested Seurat graph not found because the object has no graphs: ", requested_graph)
+    }
+    return(empty_neighbor_info())
+  }
+
+  graph_name <- requested_graph
+  if (is.null(graph_name) || !nzchar(graph_name)) {
+    preferred <- unique(c(
+      paste0(x@active.assay, "_snn"),
+      paste0(x@active.assay, "_nn"),
+      "SCT_snn",
+      "SCT_nn",
+      "Spatial_snn",
+      "Spatial_nn",
+      "RNA_snn",
+      "RNA_nn"
+    ))
+    graph_name <- pick_first_existing(graph_names, preferred) %||% graph_names[[1]]
+  } else if (!(graph_name %in% graph_names)) {
+    stop(
+      "Requested Seurat graph not found: ",
+      graph_name,
+      ". Available graphs: ",
+      paste(graph_names, collapse = ", ")
+    )
+  }
+
+  graph <- x@graphs[[graph_name]]
+  list(
+    section_edges = extract_sparse_graph_edges_by_section(
+      graph = graph,
+      cell_names = cell_names,
+      group_values = group_values
+    ),
+    key = graph_name
+  )
+}
+
+extract_sparse_graph_edges_by_section <- function(graph, cell_names, group_values) {
+  edge_pairs <- extract_sparse_graph_edge_pairs(
+    graph = graph,
+    cell_names = cell_names
+  )
+  split_global_edges_by_section(
+    edge_pairs = edge_pairs,
+    group_values = group_values
+  )
+}
+
+extract_sparse_graph_edge_pairs <- function(graph, cell_names) {
+  if (!methods::is(graph, "Matrix")) {
+    stop(
+      "Unsupported graph object for neighbor export: ",
+      paste(class(graph), collapse = ", ")
+    )
+  }
+  if (!requireNamespace("Matrix", quietly = TRUE)) {
+    stop("Neighbor graph export from sparse matrices requires the Matrix package.")
+  }
+
+  graph_aligned <- graph
+  graph_rows <- rownames(graph_aligned)
+  graph_cols <- colnames(graph_aligned)
+  if (!is.null(graph_rows) && !is.null(graph_cols) &&
+      all(cell_names %in% graph_rows) && all(cell_names %in% graph_cols)) {
+    graph_aligned <- graph_aligned[cell_names, cell_names, drop = FALSE]
+  }
+
+  summary_df <- Matrix::summary(graph_aligned)
+  if (nrow(summary_df) == 0L) {
+    return(matrix(integer(), ncol = 2L))
+  }
+
+  from <- as.integer(summary_df$i)
+  to <- as.integer(summary_df$j)
+  keep <- from != to
+  if (!any(keep)) {
+    return(matrix(integer(), ncol = 2L))
+  }
+
+  edge_pairs <- cbind(
+    from = pmin(from[keep], to[keep]),
+    to = pmax(from[keep], to[keep])
+  )
+  edge_pairs <- edge_pairs[!duplicated(edge_pairs), , drop = FALSE]
+  edge_pairs[order(edge_pairs[, 1], edge_pairs[, 2]), , drop = FALSE]
+}
+
+split_global_edges_by_section <- function(edge_pairs, group_values) {
+  section_ids <- unique(as.character(group_values))
+  section_edges <- stats::setNames(vector("list", length(section_ids)), section_ids)
+  if (length(section_ids) == 0L) {
+    return(empty_named_list())
+  }
+
+  group_values <- as.character(group_values)
+  for (section_id in section_ids) {
+    section_edges[[section_id]] <- integer()
+  }
+  if (is.null(edge_pairs) || length(edge_pairs) == 0L || nrow(edge_pairs) == 0L) {
+    return(section_edges)
+  }
+
+  edge_section <- group_values[edge_pairs[, 1]]
+  same_section <- edge_section == group_values[edge_pairs[, 2]]
+  if (!any(same_section)) {
+    return(section_edges)
+  }
+
+  same_edges <- edge_pairs[same_section, , drop = FALSE]
+  same_labels <- edge_section[same_section]
+  local_lookup <- lapply(
+    section_ids,
+    function(section_id) {
+      idx <- which(group_values == section_id)
+      lookup <- integer(length(group_values))
+      lookup[idx] <- seq_along(idx) - 1L
+      lookup
+    }
+  )
+  names(local_lookup) <- section_ids
+
+  for (section_id in section_ids) {
+    section_pair_idx <- which(same_labels == section_id)
+    if (length(section_pair_idx) == 0L) {
+      next
+    }
+    section_pairs <- same_edges[section_pair_idx, , drop = FALSE]
+    lookup <- local_lookup[[section_id]]
+    local_pairs <- cbind(
+      lookup[section_pairs[, 1]] ,
+      lookup[section_pairs[, 2]]
+    )
+    section_edges[[section_id]] <- as.integer(as.vector(t(local_pairs)))
+  }
+
+  section_edges
+}
+
+derive_spatial_neighbor_info <- function(coords, group_values, neighbor_k = 6L) {
+  list(
+    section_edges = derive_spatial_neighbor_edges_by_section(
+      coords = coords,
+      group_values = group_values,
+      neighbor_k = neighbor_k
+    ),
+    key = paste0("spatial_knn_k", as.integer(neighbor_k))
+  )
+}
+
+derive_spatial_neighbor_edges_by_section <- function(coords, group_values, neighbor_k = 6L) {
+  section_ids <- unique(as.character(group_values))
+  section_edges <- stats::setNames(vector("list", length(section_ids)), section_ids)
+  group_values <- as.character(group_values)
+
+  for (section_id in section_ids) {
+    idx <- which(group_values == section_id)
+    section_edges[[section_id]] <- derive_section_knn_edges(
+      coords = coords[idx, , drop = FALSE],
+      neighbor_k = neighbor_k
+    )
+  }
+
+  section_edges
+}
+
+derive_section_knn_edges <- function(coords, neighbor_k = 6L, chunk_size = 512L) {
+  coords <- as.matrix(coords)
+  n <- nrow(coords)
+  if (n < 2L) {
+    return(integer())
+  }
+
+  k <- max(1L, min(as.integer(neighbor_k), n - 1L))
+  if (!is.finite(k) || k < 1L) {
+    return(integer())
+  }
+
+  norms <- rowSums(coords * coords)
+  from <- integer(n * k)
+  to <- integer(n * k)
+  pos <- 1L
+
+  for (start in seq.int(1L, n, by = chunk_size)) {
+    end <- min(start + chunk_size - 1L, n)
+    block_idx <- seq.int(start, end)
+    block <- coords[block_idx, , drop = FALSE]
+    dist_sq <- outer(norms[block_idx], norms, "+") - 2 * (block %*% t(coords))
+    dist_sq[cbind(seq_along(block_idx), block_idx)] <- Inf
+
+    for (row_pos in seq_along(block_idx)) {
+      nearest <- head(order(dist_sq[row_pos, ]), k)
+      row_end <- pos + k - 1L
+      from[pos:row_end] <- block_idx[[row_pos]]
+      to[pos:row_end] <- nearest
+      pos <- row_end + 1L
+    }
+  }
+
+  if (pos == 1L) {
+    return(integer())
+  }
+
+  from <- from[seq_len(pos - 1L)] - 1L
+  to <- to[seq_len(pos - 1L)] - 1L
+  undirected <- cbind(
+    from = pmin(from, to),
+    to = pmax(from, to)
+  )
+  undirected <- undirected[undirected[, 1] != undirected[, 2], , drop = FALSE]
+  if (nrow(undirected) == 0L) {
+    return(integer())
+  }
+
+  undirected <- undirected[!duplicated(undirected), , drop = FALSE]
+  undirected <- undirected[order(undirected[, 1], undirected[, 2]), , drop = FALSE]
+  as.integer(as.vector(t(undirected)))
 }
 
 normalize_expression <- function(expression, gene_names = NULL, n_cells, cell_names = NULL) {

@@ -29,6 +29,17 @@ as_json_array <- function(x) {
   unname(as.list(x))
 }
 
+pack_uint32_base64 <- function(x) {
+  if (is.null(x) || length(x) == 0) {
+    return(NULL)
+  }
+
+  con <- rawConnection(raw(0), "wb")
+  on.exit(close(con), add = TRUE)
+  writeBin(as.integer(x), con, size = 4L, endian = "little")
+  jsonlite::base64_enc(rawConnectionValue(con))
+}
+
 escape_html <- function(x) {
   if (is.null(x)) {
     return("")

@@ -48,13 +48,13 @@ Goal: Achieve feature parity between the R export pipeline and the Python pipeli
 ## Phase 3: Spatial Graph and Neighbor Features
 
 ### Tasks
-- [ ] Add optional neighbor graph export.
-- [ ] For Seurat, detect existing graph objects.
-- [ ] Prefer existing graphs when available.
-- [ ] Add option to derive graphs from spatial coordinates when missing.
-- [ ] Populate `has_neighbors` in the payload.
-- [ ] Export per-section edge lists.
-- [ ] Export `neighbor_stats`.
+- [x] Add optional neighbor graph export.
+- [x] For Seurat, detect existing graph objects.
+- [x] Prefer existing graphs when available.
+- [x] Add option to derive graphs from spatial coordinates when missing.
+- [x] Populate `has_neighbors` in the payload.
+- [x] Export per-section edge lists.
+- [x] Export `neighbor_stats`.
 
 ### Acceptance Criteria
 - Neighbor overlays work in the viewer.
@@ -95,6 +95,6 @@ Goal: Achieve feature parity between the R export pipeline and the Python pipeli
 
 - Phase 1: ✅ Complete  
 - Phase 2: ✅ Complete  
-- Phase 3: ⬜ Not started  
+- Phase 3: ✅ Complete  
 - Phase 4: ⬜ Not started  
 - Phase 5: ⬜ Not started

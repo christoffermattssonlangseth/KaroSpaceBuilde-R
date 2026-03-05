@@ -137,6 +137,9 @@ export_karospace_viewer <- function(
   metadata_input = NULL,
   metadata_input_columns = NULL,
   metadata_prefix = NULL,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L,
   metadata_columns = NULL,
   outline_by = NULL,
   title = "KaroSpace",
@@ -156,6 +159,9 @@ export_karospace_viewer <- function(
     metadata_input = metadata_input,
     metadata_input_columns = metadata_input_columns,
     metadata_prefix = metadata_prefix,
+    neighbor_mode = neighbor_mode,
+    neighbor_graph = neighbor_graph,
+    neighbor_k = neighbor_k,
     metadata_columns = metadata_columns,
     outline_by = outline_by
   )

@@ -67,6 +67,8 @@ payload <- build_viewer_payload(
   initial_color = "cell_type",
   additional_colors = c("course", "seurat_clusters"),
   genes = c("Gene01", "Gene02"),
+  neighbor_mode = "spatial",
+  neighbor_k = 1L,
   metadata_columns = c("course")
 )
 
@@ -75,10 +77,17 @@ stopifnot(payload$total_cells == n_cells)
 stopifnot(identical(unlist(payload$available_colors, use.names = FALSE), c("cell_type", "course", "seurat_clusters")))
 stopifnot(identical(unlist(payload$available_genes, use.names = FALSE), c("Gene01", "Gene02")))
 stopifnot(isTRUE(payload$has_umap))
+stopifnot(isTRUE(payload$has_neighbors))
+stopifnot(identical(payload$neighbors_key, "spatial_knn_k1"))
 stopifnot(identical(names(payload$genes_meta), c("Gene01", "Gene02")))
 stopifnot(length(payload$sections[[1]]$genes$Gene01) == 20L)
 stopifnot(identical(payload$gene_encodings$Gene01, "dense"))
 stopifnot("(missing)" %in% unlist(payload$colors_meta$seurat_clusters$categories, use.names = FALSE))
+stopifnot(is.character(payload$sections[[1]]$edges_b64) && nzchar(payload$sections[[1]]$edges_b64))
+stopifnot(is.null(payload$sections[[1]]$edges))
+stopifnot("cell_type" %in% names(payload$neighbor_stats))
+stopifnot(length(payload$neighbor_stats$cell_type$categories) == 3L)
+stopifnot(length(payload$neighbor_stats$cell_type$counts) == 3L)
 
 gene_info <- resolve_input_gene_names(toy)
 stopifnot(identical(unlist(gene_info$gene_names[1:3], use.names = FALSE), c("Gene01", "Gene02", "Gene03")))
@@ -107,6 +116,28 @@ stopifnot(identical(unname(as.numeric(staffli_coords["cell_a", ])), c(22, 44)))
 staffli_obs <- extract_staffli_obs_df(fake_staffli)
 stopifnot(identical(staffli_obs$sampleID, c("1", "1")))
 stopifnot(identical(staffli_obs$sample_name, c("demo_section_a", "demo_section_a")))
+
+if (requireNamespace("Matrix", quietly = TRUE)) {
+  graph <- Matrix::Matrix(
+    c(
+      0, 1, 0, 0,
+      1, 0, 0, 0,
+      0, 0, 0, 1,
+      0, 0, 1, 0
+    ),
+    nrow = 4,
+    byrow = TRUE,
+    sparse = TRUE
+  )
+  rownames(graph) <- colnames(graph) <- rownames(obs)[1:4]
+  graph_edges <- extract_sparse_graph_edges_by_section(
+    graph = graph,
+    cell_names = rownames(obs)[1:4],
+    group_values = c("section_a", "section_a", "section_b", "section_b")
+  )
+  stopifnot(identical(graph_edges$section_a, c(0L, 1L)))
+  stopifnot(identical(graph_edges$section_b, c(0L, 1L)))
+}
 
 output_path <- tempfile(fileext = ".html")
 render_viewer_html(

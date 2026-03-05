@@ -8,6 +8,9 @@ build_viewer_payload <- function(
   metadata_input = NULL,
   metadata_input_columns = NULL,
   metadata_prefix = NULL,
+  neighbor_mode = "spatial",
+  neighbor_graph = NULL,
+  neighbor_k = 6L,
   metadata_columns = NULL,
   outline_by = NULL
 ) {
@@ -23,6 +26,9 @@ build_viewer_payload <- function(
     additional_colors = additional_colors,
     genes = genes,
     assay = assay,
+    neighbor_mode = neighbor_mode,
+    neighbor_graph = neighbor_graph,
+    neighbor_k = neighbor_k,
     metadata_columns = metadata_columns,
     outline_by = outline_by
   )
@@ -54,14 +60,18 @@ build_payload_from_normalized <- function(source) {
   )
 
   sections <- vector("list", length(section_ids))
+  section_index_map <- stats::setNames(vector("list", length(section_ids)), section_ids)
   all_indices <- seq_len(nrow(obs)) - 1L
   has_umap <- !is.null(umap)
+  section_edges <- source$section_edges %||% empty_named_list()
 
   for (i in seq_along(section_ids)) {
     section_id <- section_ids[[i]]
     idx <- which(group_values == section_id)
+    section_index_map[[section_id]] <- idx
     section_obs <- obs[idx, , drop = FALSE]
     section_coords <- coords[idx, , drop = FALSE]
+    section_edge_pairs <- as.integer(section_edges[[section_id]] %||% integer())
 
     section_colors <- lapply(color_data, function(info) {
       as_json_array(as.numeric(info$values[idx]))
@@ -70,6 +80,8 @@ build_payload_from_normalized <- function(source) {
     section_genes <- lapply(gene_data$values, function(values) {
       as_json_array(as.numeric(values[idx]))
     })
+
+    packed_edges <- pack_uint32_base64(section_edge_pairs)
 
     section_entry <- list(
       id = section_id,
@@ -95,8 +107,8 @@ build_payload_from_normalized <- function(source) {
       umap_y = NULL,
       umap_xb64 = NULL,
       umap_yb64 = NULL,
-      edges = list(),
-      edges_b64 = NULL
+      edges = if (is.null(packed_edges)) list() else NULL,
+      edges_b64 = packed_edges
     )
 
     if (has_umap) {
@@ -113,6 +125,12 @@ build_payload_from_normalized <- function(source) {
     as.list(rep("dense", length(gene_data$meta))),
     names(gene_data$meta)
   )
+  neighbor_stats <- build_neighbor_stats(
+    color_data = color_data,
+    section_index_map = section_index_map,
+    section_edges = section_edges
+  )
+  has_neighbors <- has_neighbor_edges(section_edges)
 
   payload <- list(
     schema_version = "1.0.0",
@@ -130,9 +148,9 @@ build_payload_from_normalized <- function(source) {
     marker_genes = empty_named_list(),
     has_umap = has_umap,
     umap_bounds = build_umap_bounds(umap),
-    has_neighbors = FALSE,
-    neighbors_key = NULL,
-    neighbor_stats = empty_named_list(),
+    has_neighbors = has_neighbors,
+    neighbors_key = if (has_neighbors) source$neighbors_key %||% "neighbors" else NULL,
+    neighbor_stats = neighbor_stats,
     interaction_markers = empty_named_list()
   )
 
@@ -141,6 +159,74 @@ build_payload_from_normalized <- function(source) {
   }
 
   payload
+}
+
+build_neighbor_stats <- function(color_data, section_index_map, section_edges) {
+  stats <- empty_named_list()
+  if (!has_neighbor_edges(section_edges) || length(color_data) == 0L) {
+    return(stats)
+  }
+
+  for (color_name in names(color_data)) {
+    info <- color_data[[color_name]]
+    if (isTRUE(info$meta$is_continuous)) {
+      next
+    }
+
+    categories <- unlist(info$meta$categories, use.names = FALSE)
+    n_categories <- length(categories)
+    if (n_categories == 0L) {
+      next
+    }
+
+    encoded_all <- as.integer(info$values) + 1L
+    n_cells <- tabulate(encoded_all, nbins = n_categories)
+    counts <- matrix(0, nrow = n_categories, ncol = n_categories)
+    degree_sum <- numeric(n_categories)
+
+    for (section_id in names(section_index_map)) {
+      idx <- section_index_map[[section_id]]
+      if (length(idx) == 0L) {
+        next
+      }
+      packed_edges <- as.integer(section_edges[[section_id]] %||% integer())
+      if (length(packed_edges) == 0L) {
+        next
+      }
+      edge_matrix <- matrix(packed_edges, ncol = 2L, byrow = TRUE)
+      section_values <- encoded_all[idx]
+      source_cat <- section_values[edge_matrix[, 1] + 1L]
+      target_cat <- section_values[edge_matrix[, 2] + 1L]
+
+      valid <- is.finite(source_cat) & is.finite(target_cat)
+      if (!any(valid)) {
+        next
+      }
+      source_cat <- as.integer(source_cat[valid])
+      target_cat <- as.integer(target_cat[valid])
+
+      for (pair_idx in seq_along(source_cat)) {
+        i <- source_cat[[pair_idx]]
+        j <- target_cat[[pair_idx]]
+        counts[i, j] <- counts[i, j] + 1
+        counts[j, i] <- counts[j, i] + 1
+        degree_sum[i] <- degree_sum[i] + 1
+        degree_sum[j] <- degree_sum[j] + 1
+      }
+    }
+
+    mean_degree <- ifelse(n_cells > 0, degree_sum / n_cells, 0)
+    stats[[color_name]] <- list(
+      categories = as_json_array(categories),
+      counts = lapply(seq_len(n_categories), function(i) as_json_array(as.numeric(counts[i, ]))),
+      n_cells = as_json_array(as.integer(n_cells)),
+      mean_degree = as_json_array(as.numeric(mean_degree)),
+      zscore = NULL,
+      perm_n = 0
+    )
+  }
+
+  stats
 }
 
 build_color_column <- function(column) {

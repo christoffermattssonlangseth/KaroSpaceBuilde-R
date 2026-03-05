@@ -41,7 +41,7 @@ if (isTRUE(options$help) || is.null(options$input)) {
       "Rscript scripts/example_export.R --input path/to/object.rds [--output viewer.html]",
       "[--groupby sample_id] [--initial-color cell_type] [--additional-colors course,condition]",
       "[--metadata-input other_object.rds] [--metadata-input-columns col1,col2] [--metadata-prefix ext_]",
-      "[--assay SCT] [--genes GENE1,GENE2] [--inspect] [--inspect-genes]",
+      "[--assay SCT] [--genes GENE1,GENE2] [--neighbor-mode spatial] [--neighbor-graph SCT_snn] [--neighbor-k 6] [--inspect] [--inspect-genes]",
       "[--gene-query COL] [--gene-limit 50] [--title MyViewer] [--theme light]",
       sep = "\n"
     ),
@@ -101,6 +101,13 @@ extract_assay_names <- function(x) {
     return(names(x$assays))
   }
 
+  character()
+}
+
+extract_graph_names <- function(x) {
+  if (inherits(x, "Seurat")) {
+    return(names(x@graphs))
+  }
   character()
 }
 
@@ -348,6 +355,13 @@ obj <- prepare_karospace_input(
 )
 obs <- extract_obs(obj)
 available_assays <- extract_assay_names(obj)
+available_graphs <- extract_graph_names(obj)
+neighbor_mode <- options[["neighbor-mode"]] %||% "spatial"
+neighbor_graph <- options[["neighbor-graph"]]
+neighbor_k <- suppressWarnings(as.integer(options[["neighbor-k"]] %||% 6L))
+if (is.na(neighbor_k) || neighbor_k < 1L) {
+  neighbor_k <- 6L
+}
 merge_report <- report_metadata_merge(obj, obs)
 
 groupby <- options$groupby %||% detect_groupby(obs)
@@ -380,6 +394,9 @@ if (!is.null(metadata_input_path) && nzchar(metadata_input_path)) {
 cat("Detected groupby: ", groupby, "\n", sep = "")
 cat("Detected initial color: ", initial_color, "\n", sep = "")
 cat("Assay: ", assay_name %||% "<none>", "\n", sep = "")
+cat("Neighbor mode: ", neighbor_mode, "\n", sep = "")
+cat("Neighbor graph: ", neighbor_graph %||% "<auto>", "\n", sep = "")
+cat("Neighbor k: ", neighbor_k, "\n", sep = "")
 cat(
   "Additional colors: ",
   if (length(additional_colors %||% character()) > 0L) paste(additional_colors, collapse = ", ") else "<none>",
@@ -408,6 +425,12 @@ cat(
 cat(
   "Available assays: ",
   if (length(available_assays) > 0L) paste(available_assays, collapse = ", ") else "<none>",
+  "\n",
+  sep = ""
+)
+cat(
+  "Available graphs: ",
+  if (length(available_graphs) > 0L) paste(available_graphs, collapse = ", ") else "<none>",
   "\n",
   sep = ""
 )
@@ -466,6 +489,9 @@ export_karospace_viewer(
   metadata_input = NULL,
   metadata_input_columns = NULL,
   metadata_prefix = NULL,
+  neighbor_mode = neighbor_mode,
+  neighbor_graph = neighbor_graph,
+  neighbor_k = neighbor_k,
   metadata_columns = split_csv(options[["metadata-columns"]]),
   outline_by = options[["outline-by"]],
   title = title,
