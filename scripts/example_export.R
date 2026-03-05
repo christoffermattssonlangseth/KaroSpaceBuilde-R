@@ -196,6 +196,15 @@ groupby <- options$groupby %||% detect_groupby(obs)
 initial_color <- options[["initial-color"]] %||% detect_initial_color(obs, groupby)
 additional_colors <- split_csv(options[["additional-colors"]]) %||%
   detect_additional_colors(obs, groupby, initial_color)
+missing_additional_colors <- setdiff(additional_colors %||% character(), names(obs))
+if (length(missing_additional_colors) > 0L) {
+  warning(
+    "Dropping missing additional colors: ",
+    paste(missing_additional_colors, collapse = ", "),
+    call. = FALSE
+  )
+  additional_colors <- setdiff(additional_colors, missing_additional_colors)
+}
 output_path <- options$output %||% default_output_path(input_path)
 title <- options$title %||% tools::file_path_sans_ext(basename(input_path))
 theme <- options$theme %||% "light"

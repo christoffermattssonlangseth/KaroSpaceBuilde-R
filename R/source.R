@@ -122,31 +122,51 @@ normalize_seurat_object <- function(
     stop("Seurat object has no spatial image data in @images.")
   }
 
-  image_name <- names(x@images)[[1]]
-  image_obj <- x@images[[image_name]]
-  if (!("coordinates" %in% slotNames(image_obj))) {
-    stop("Seurat image object does not expose a coordinates slot.")
+  coord_frames <- list()
+  x_col <- NULL
+  y_col <- NULL
+  for (image_name in names(x@images)) {
+    image_obj <- x@images[[image_name]]
+    if (!("coordinates" %in% slotNames(image_obj))) {
+      next
+    }
+
+    image_coords <- image_obj@coordinates
+    if (!is.data.frame(image_coords) || nrow(image_coords) == 0) {
+      next
+    }
+
+    image_x_col <- pick_first_existing(colnames(image_coords), c("imagecol", "col", "x"))
+    image_y_col <- pick_first_existing(colnames(image_coords), c("imagerow", "row", "y"))
+    if (is.null(image_x_col) || is.null(image_y_col)) {
+      numeric_cols <- colnames(image_coords)[vapply(image_coords, is.numeric, logical(1))]
+      if (length(numeric_cols) < 2) {
+        next
+      }
+      image_x_col <- image_x_col %||% numeric_cols[[1]]
+      image_y_col <- image_y_col %||% numeric_cols[[2]]
+    }
+
+    x_col <- x_col %||% image_x_col
+    y_col <- y_col %||% image_y_col
+    coord_frames[[image_name]] <- image_coords
   }
 
-  coord_df <- image_obj@coordinates
-  if (!is.data.frame(coord_df)) {
-    stop("Seurat image coordinates are not a data.frame.")
+  if (length(coord_frames) == 0) {
+    stop("Could not resolve coordinates from any Seurat image slot.")
   }
-  if (!all(cell_names %in% rownames(coord_df))) {
-    stop("Seurat image coordinates do not cover all cells in meta.data.")
+
+  coord_df <- do.call(rbind, unname(coord_frames))
+  coord_df <- coord_df[!duplicated(rownames(coord_df)), , drop = FALSE]
+  missing_cells <- setdiff(cell_names, rownames(coord_df))
+  if (length(missing_cells) > 0) {
+    stop(
+      "Seurat image coordinates do not cover all cells in meta.data. Missing ",
+      length(missing_cells),
+      " cells."
+    )
   }
   coord_df <- coord_df[cell_names, , drop = FALSE]
-
-  x_col <- pick_first_existing(colnames(coord_df), c("imagecol", "col", "x"))
-  y_col <- pick_first_existing(colnames(coord_df), c("imagerow", "row", "y"))
-  if (is.null(x_col) || is.null(y_col)) {
-    numeric_cols <- colnames(coord_df)[vapply(coord_df, is.numeric, logical(1))]
-    if (length(numeric_cols) < 2) {
-      stop("Could not resolve x/y coordinates from the Seurat image slot.")
-    }
-    x_col <- x_col %||% numeric_cols[[1]]
-    y_col <- y_col %||% numeric_cols[[2]]
-  }
 
   coords <- as.matrix(coord_df[, c(x_col, y_col), drop = FALSE])
   mode(coords) <- "numeric"
@@ -328,7 +348,12 @@ normalize_list_source <- function(
   additional_colors <- unique(as.character(additional_colors %||% character()))
   missing_colors <- setdiff(additional_colors, names(obs))
   if (length(missing_colors) > 0) {
-    stop("additional_colors not found in obs: ", paste(missing_colors, collapse = ", "))
+    warning(
+      "Dropping missing additional_colors: ",
+      paste(missing_colors, collapse = ", "),
+      call. = FALSE
+    )
+    additional_colors <- setdiff(additional_colors, missing_colors)
   }
 
   umap <- as_plain_matrix(x$umap)
