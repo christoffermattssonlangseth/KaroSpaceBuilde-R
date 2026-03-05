@@ -1,0 +1,21 @@
+Package: KaroSpaceBuildR
+Title: Build KaroSpace-Like Viewers from RDS Inputs
+Version: 0.0.1
+Authors@R: person("Chris", "Langseth", role = c("aut", "cre"))
+Description: Standalone R-side exporter for spatial transcriptomics objects
+    stored as RDS files. The package normalizes supported R objects into the
+    viewer payload expected by the vendored KaroSpace viewer shell and writes
+    a standalone HTML viewer without depending on the KaroSpace repository at
+    runtime.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: false
+Imports:
+    jsonlite,
+    methods
+Suggests:
+    Matrix,
+    SingleCellExperiment,
+    SpatialExperiment,
+    SummarizedExperiment

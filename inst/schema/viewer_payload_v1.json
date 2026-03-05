@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "KaroSpaceBuildR viewer payload v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "initial_color",
+    "groupby",
+    "colors_meta",
+    "genes_meta",
+    "metadata_filters",
+    "n_sections",
+    "total_cells",
+    "sections",
+    "available_colors",
+    "available_genes",
+    "has_umap",
+    "has_neighbors"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0.0"
+    },
+    "initial_color": {
+      "type": "string"
+    },
+    "groupby": {
+      "type": "string"
+    },
+    "colors_meta": {
+      "type": "object"
+    },
+    "genes_meta": {
+      "type": "object"
+    },
+    "metadata_filters": {
+      "type": "object"
+    },
+    "n_sections": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "total_cells": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "sections": {
+      "type": "array"
+    },
+    "available_colors": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "available_genes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "has_umap": {
+      "type": "boolean"
+    },
+    "has_neighbors": {
+      "type": "boolean"
+    }
+  }
+}
+
