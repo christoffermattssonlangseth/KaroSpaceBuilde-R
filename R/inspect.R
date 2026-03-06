@@ -143,7 +143,7 @@ warn_low_coverage_selected_colors <- function(obj, selected_columns, min_coverag
 is_groupby_candidate <- function(column) {
   values <- unique_non_missing(column)
   n_unique <- length(values)
-  if (is.factor(column) || is.character(column) || is.logical(column)) {
+  if (is_categorical(column)) {
     return(n_unique > 1L && n_unique <= max(500L, floor(length(column) * 0.95)))
   }
 
@@ -181,9 +181,7 @@ detect_groupby <- function(obs) {
     return(pick_preferred_column(candidates, preferred) %||% candidates[[1L]])
   }
 
-  categorical_cols <- names(obs)[vapply(obs, function(column) {
-    is.factor(column) || is.character(column) || is.logical(column)
-  }, logical(1))]
+  categorical_cols <- names(obs)[vapply(obs, is_categorical, logical(1))]
   if (length(categorical_cols) == 0L) {
     stop("Could not auto-detect a groupby column. Pass groupby explicitly.")
   }
@@ -217,7 +215,7 @@ detect_initial_color <- function(obs, groupby) {
   coverage <- vapply(obs[candidates], column_coverage, numeric(1))
   high_coverage_candidates <- candidates[coverage[candidates] >= min_coverage]
   if (length(high_coverage_candidates) == 0L &&
-      (is.factor(obs[[groupby]]) || is.character(obs[[groupby]]) || is.logical(obs[[groupby]]))) {
+      is_categorical(obs[[groupby]])) {
     return(groupby)
   }
   if (length(high_coverage_candidates) > 0L) {
@@ -226,9 +224,7 @@ detect_initial_color <- function(obs, groupby) {
     candidates <- candidates[order(coverage[candidates], candidates, decreasing = TRUE)]
   }
 
-  categorical_candidates <- candidates[vapply(obs[candidates], function(column) {
-    is.factor(column) || is.character(column) || is.logical(column)
-  }, logical(1))]
+  categorical_candidates <- candidates[vapply(obs[candidates], is_categorical, logical(1))]
 
   preferred <- c(
     "cell_type", "celltype", "celltypes", "annotation", "annotations",
@@ -263,9 +259,7 @@ detect_additional_colors <- function(obs, groupby, initial_color) {
     candidates <- candidates[order(coverage[candidates], candidates, decreasing = TRUE)]
   }
 
-  categorical <- candidates[vapply(obs[candidates], function(column) {
-    is.factor(column) || is.character(column) || is.logical(column)
-  }, logical(1))]
+  categorical <- candidates[vapply(obs[candidates], is_categorical, logical(1))]
   numeric <- setdiff(candidates, categorical)
 
   utils::head(c(categorical, numeric), 3L)
@@ -316,7 +310,7 @@ build_column_summary <- function(obs, columns) {
     non_missing <- unique_non_missing(column)
     list(
       name = column_name,
-      type = if (is.factor(column) || is.character(column) || is.logical(column)) {
+      type = if (is_categorical(column)) {
         "categorical"
       } else if (is.numeric(column)) {
         "numeric"
@@ -384,9 +378,7 @@ inspect_karospace_input <- function(
     metadata_prefix = metadata_prefix
   )
   obs <- extract_inspect_obs(obj)
-  categorical_cols <- names(obs)[vapply(obs, function(column) {
-    is.factor(column) || is.character(column) || is.logical(column)
-  }, logical(1))]
+  categorical_cols <- names(obs)[vapply(obs, is_categorical, logical(1))]
   numeric_cols <- names(obs)[vapply(obs, is.numeric, logical(1))]
   available_assays <- extract_inspect_assay_names(obj)
   available_graphs <- extract_inspect_graph_names(obj)

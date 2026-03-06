@@ -420,13 +420,13 @@ normalize_karospace_build_config <- function(
   if (normalized$version != 1L) {
     stop("Unsupported build config version: ", normalized$version, ". Expected version 1.")
   }
-  if (!normalized$neighbor_mode %in% c("spatial", "existing", "auto", "none")) {
+  if (!normalized$neighbor_mode %in% KAROSPACE_NEIGHBOR_MODES) {
     stop("Unsupported neighbor_mode in build config: ", normalized$neighbor_mode)
   }
-  if (!normalized$marker_test %in% c("mean_diff", "wilcoxon")) {
+  if (!normalized$marker_test %in% KAROSPACE_MARKER_TESTS) {
     stop("Unsupported marker_test in build config: ", normalized$marker_test)
   }
-  if (!normalized$theme %in% c("light", "dark")) {
+  if (!normalized$theme %in% KAROSPACE_THEMES) {
     stop("Unsupported theme in build config: ", normalized$theme)
   }
   if (!is.null(normalized$genes) && !is.null(normalized$top_genes_n)) {

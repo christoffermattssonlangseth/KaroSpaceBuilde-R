@@ -365,11 +365,33 @@ build_neighbor_stats <- function(color_data, section_index_map, section_edges, n
   stats
 }
 
+# Estimate neighbor enrichment z-scores via permutation testing.
+#
+# The approach: for each permutation, cell-type labels are shuffled
+# independently within each section (preserving per-section composition),
+# and a symmetric co-occurrence count matrix [n_categories x n_categories]
+# is tallied over all edges. The mean and variance of this null distribution
+# are tracked online using Welford's algorithm (perm_mean / perm_M2).
+#
+# Final z-score = (observed - null_mean) / null_sd
+#   - positive z: category pair co-occurs more than expected by chance
+#   - negative z: category pair avoids each other
+#   - NA: null_sd == 0 (e.g. only one category present in every section)
+#
+# Args:
+#   encoded_all        — integer vector of category codes (1..n_categories) for all cells
+#   n_categories       — number of distinct categories
+#   section_index_map  — named list: section_id → global cell indices in that section
+#   section_edges      — named list: section_id → flat edge index pairs (0-based local)
+#   observed_counts    — [n_categories x n_categories] observed co-occurrence matrix
+#   n_perms            — number of label-shuffle permutations
+#   seed               — RNG seed (caller's RNG state is preserved on exit)
 compute_neighbor_zscores <- function(
   encoded_all, n_categories, section_index_map, section_edges,
   observed_counts, n_perms = 200L, seed = 42L
 ) {
-  # Collect per-section edge pairs and section membership for labels
+  # Unpack section edges into global-index edge lists; also record which cells
+  # belong to each section (needed for section-preserving shuffles below).
   section_idx_list <- list()
   all_src <- integer(0)
   all_dst <- integer(0)
@@ -377,6 +399,8 @@ compute_neighbor_zscores <- function(
     idx <- section_index_map[[section_id]]
     packed <- as.integer(section_edges[[section_id]] %||% integer())
     if (!length(packed) || !length(idx)) next
+    # packed is a flat interleaved vector: [src0, dst0, src1, dst1, ...]
+    # indices are 0-based local; +1 converts to 1-based for idx lookup.
     em <- matrix(packed, ncol = 2L, byrow = TRUE) + 1L
     all_src <- c(all_src, idx[em[, 1]])
     all_dst <- c(all_dst, idx[em[, 2]])
@@ -386,7 +410,7 @@ compute_neighbor_zscores <- function(
 
   n_cats_sq <- n_categories^2L
 
-  # Preserve caller's RNG state
+  # Preserve caller's RNG state so permutation testing is side-effect-free.
   old_seed <- if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
     get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
   } else {
@@ -403,6 +427,7 @@ compute_neighbor_zscores <- function(
   }, add = TRUE)
   set.seed(seed)
 
+  # Welford online accumulators for the null distribution.
   perm_mean <- matrix(0, n_categories, n_categories)
   perm_M2   <- matrix(0, n_categories, n_categories)
 
@@ -413,6 +438,8 @@ compute_neighbor_zscores <- function(
     for (idx in section_idx_list) {
       pl[idx] <- sample(encoded_all[idx])
     }
+    # Symmetrised co-occurrence: count each undirected edge in both directions
+    # so the result matrix is symmetric (same as observed_counts).
     sc <- pl[all_src]
     dc <- pl[all_dst]
     valid <- is.finite(sc) & is.finite(dc) &
@@ -424,6 +451,7 @@ compute_neighbor_zscores <- function(
       tabulate((dc - 1L) * n_categories + sc, nbins = n_cats_sq),
       n_categories, n_categories
     )
+    # Welford update: accumulate running mean and sum of squared deviations.
     delta <- mat - perm_mean
     perm_mean <- perm_mean + delta / k
     perm_M2   <- perm_M2 + delta * (mat - perm_mean)
@@ -534,6 +562,28 @@ build_marker_genes <- function(
   markers
 }
 
+# Compute contact-conditioned marker genes for all source→target category pairs.
+#
+# For each categorical color column and each (source, target) cell-type pair,
+# cells of the source type are split into two groups based on whether they
+# physically contact target cells in the neighbor graph:
+#   - "contact" (pos_idx):     source cells with >= min_neighbors edges to a target cell
+#   - "non-contact" (neg_idx): source cells with zero edges to any target cell
+#
+# Marker genes are then ranked between these two groups, identifying genes
+# whose expression is modulated by proximity to the target cell type.
+#
+# Outer loop structure:
+#   color_name  → categorical column (e.g. "cell_type")
+#     source_name → source category (e.g. "Neuron")
+#       target_name → target category ranked by enrichment z-score, then edge count
+#
+# Filtering:
+#   - Skips "(missing)" categories
+#   - Only considers targets that share at least one edge with the source
+#   - Skips source→target pairs where either contact or non-contact group is
+#     smaller than min_cells (result is stored with available=FALSE)
+#   - Limits to top_targets targets per source (by descending z-score, then edge count)
 build_interaction_markers <- function(
   expression,
   gene_names,
@@ -577,6 +627,8 @@ build_interaction_markers <- function(
       next
     }
 
+    # counts_matrix[i, j]: total edges between category i and category j (symmetric)
+    # zscore_matrix[i, j]: enrichment z-score from permutation testing (NA if unavailable)
     counts_matrix <- neighbor_counts_to_matrix(
       counts = stats_entry$counts,
       n_categories = length(categories)
@@ -589,6 +641,7 @@ build_interaction_markers <- function(
 
     info <- color_data[[color_name]]
     codes <- as.integer(info$values) + 1L
+    # neighbor_category_counts[cell_i, cat_j]: how many neighbors of cell_i belong to category j
     neighbor_category_counts <- build_neighbor_category_counts(
       labels = codes,
       n_categories = length(categories),
@@ -603,11 +656,15 @@ build_interaction_markers <- function(
         next
       }
 
+      # source_mask: logical vector identifying all cells of this source type
       source_mask <- codes == source_idx
       if (!any(source_mask, na.rm = TRUE)) {
         next
       }
 
+      # Filter to targets that actually share edges with this source, excluding
+      # self-interactions and missing labels. Rank by descending z-score (most
+      # enriched first), then by raw edge count as a tie-breaker.
       row_counts <- counts_matrix[source_idx, ]
       candidate_targets <- which(row_counts > 0)
       candidate_targets <- setdiff(candidate_targets, source_idx)
@@ -626,7 +683,11 @@ build_interaction_markers <- function(
       source_result <- empty_named_list()
       for (target_idx in ranked_targets) {
         target_name <- categories[[target_idx]]
+        # Per-cell count of how many neighbors belong to the target category.
         target_neighbor_counts <- neighbor_category_counts[, target_idx]
+        # Contact group: source cells with at least min_neighbors target neighbors.
+        # Non-contact group: source cells with zero target neighbors.
+        # Cells between 1..(min_neighbors-1) neighbors are excluded from both groups.
         pos_idx <- which(source_mask & target_neighbor_counts >= min_neighbors)
         neg_idx <- which(source_mask & target_neighbor_counts == 0L)
         n_pos <- length(pos_idx)

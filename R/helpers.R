@@ -1,3 +1,11 @@
+KAROSPACE_THEMES         <- c("light", "dark")
+KAROSPACE_NEIGHBOR_MODES <- c("spatial", "existing", "auto", "none")
+KAROSPACE_MARKER_TESTS   <- c("mean_diff", "wilcoxon")
+
+is_categorical <- function(x) {
+  is.factor(x) || is.character(x) || is.logical(x)
+}
+
 `%||%` <- function(x, y) {
   if (is.null(x) || length(x) == 0) {
     y

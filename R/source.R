@@ -56,7 +56,7 @@ prepare_karospace_input <- function(
 }
 
 count_non_missing_values <- function(x) {
-  if (is.factor(x) || is.character(x) || is.logical(x)) {
+  if (is_categorical(x)) {
     values <- as.character(x)
     return(sum(!is.na(values) & nzchar(values)))
   }
@@ -1088,6 +1088,20 @@ resolve_seurat_graph_neighbor_info <- function(
   )
 }
 
+# Extract neighbor graph edges and split them by section (sample/FOV).
+#
+# Handles two neighbor graph representations:
+#   - Seurat-style sparse Matrix stored in x@graphs[[name]]: a cell×cell
+#     adjacency matrix where non-zero entries indicate edges.
+#   - Other matrix-like objects would raise an error in extract_sparse_graph_edge_pairs.
+#
+# The graph is first reordered to match cell_names (important when the graph
+# was computed on a superset of cells), then converted to an undirected edge
+# list as a 2-column integer matrix of global (1-based) cell indices.
+#
+# Output: named list (one entry per section) of flat integer vectors in the
+# format expected by the payload builder — pairs interleaved as
+# [src0, dst0, src1, dst1, ...] with 0-based local (within-section) indices.
 extract_sparse_graph_edges_by_section <- function(graph, cell_names, group_values) {
   edge_pairs <- extract_sparse_graph_edge_pairs(
     graph = graph,
@@ -1138,6 +1152,26 @@ extract_sparse_graph_edge_pairs <- function(graph, cell_names) {
   edge_pairs[order(edge_pairs[, 1], edge_pairs[, 2]), , drop = FALSE]
 }
 
+# Partition a global edge list into per-section (sample/FOV) local edge lists.
+#
+# Why split by section: the neighbor graph may span multiple tissue sections
+# that are stored together in one object. Cross-section edges are biologically
+# meaningless (cells in different slides cannot be spatial neighbors), so they
+# are discarded. The payload builder processes each section independently.
+#
+# Input:
+#   edge_pairs   — [n_edges × 2] integer matrix of global 1-based cell indices
+#   group_values — character/factor vector (length = n_cells) giving each cell's
+#                  section label (e.g. sample_id or orig.ident)
+#
+# Output: named list (section_id → integer vector). Each vector is a flat,
+# interleaved sequence of 0-based local index pairs [src0, dst0, src1, dst1, ...]
+# where indices are local to that section (i.e. rank within section, not global).
+#
+# Variables:
+#   same_edges  — subset of edge_pairs where both endpoints share the same section
+#   same_labels — section label for each row in same_edges (used to route edges)
+#   local_lookup — per-section integer vector: global index → 0-based local index
 split_global_edges_by_section <- function(edge_pairs, group_values) {
   section_ids <- unique(as.character(group_values))
   section_edges <- stats::setNames(vector("list", length(section_ids)), section_ids)
@@ -1153,6 +1187,7 @@ split_global_edges_by_section <- function(edge_pairs, group_values) {
     return(section_edges)
   }
 
+  # Keep only intra-section edges (discard cross-section edges).
   edge_section <- group_values[edge_pairs[, 1]]
   same_section <- edge_section == group_values[edge_pairs[, 2]]
   if (!any(same_section)) {
@@ -1161,6 +1196,10 @@ split_global_edges_by_section <- function(edge_pairs, group_values) {
 
   same_edges <- edge_pairs[same_section, , drop = FALSE]
   same_labels <- edge_section[same_section]
+
+  # Build a global→local index map for each section.
+  # local_lookup[[s]][global_i] gives the 0-based local position of cell global_i
+  # within section s (or 0 / undefined for cells outside section s).
   local_lookup <- lapply(
     section_ids,
     function(section_id) {
@@ -1179,6 +1218,8 @@ split_global_edges_by_section <- function(edge_pairs, group_values) {
     }
     section_pairs <- same_edges[section_pair_idx, , drop = FALSE]
     lookup <- local_lookup[[section_id]]
+    # Convert global indices to 0-based local indices, then flatten row-wise
+    # into the interleaved format [src0, dst0, src1, dst1, ...].
     local_pairs <- cbind(
       lookup[section_pairs[, 1]] ,
       lookup[section_pairs[, 2]]
@@ -1562,11 +1603,7 @@ resolve_metadata_columns <- function(obs, groupby, metadata_columns = NULL) {
     return(as.character(metadata_columns))
   }
 
-  is_metadata <- vapply(
-    obs,
-    function(column) is.factor(column) || is.character(column) || is.logical(column),
-    logical(1)
-  )
+  is_metadata <- vapply(obs, is_categorical, logical(1))
   metadata <- setdiff(names(obs)[is_metadata], groupby)
   if (length(metadata) == 0) {
     return(character())
