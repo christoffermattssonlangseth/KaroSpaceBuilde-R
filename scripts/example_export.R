@@ -34,11 +34,12 @@ source(file.path(repo_root, "R", "export.R"))
 
 options <- parse_args(args)
 
-if (isTRUE(options$help) || is.null(options$input)) {
+if (isTRUE(options$help) || (is.null(options$input) && is.null(options$config))) {
   cat(
     paste(
       "Usage:",
       "Rscript scripts/example_export.R --input path/to/object.rds [--output viewer.html]",
+      "[--config build.json] [--write-config build.json]",
       "[--groupby sample_id] [--initial-color cell_type] [--additional-colors course,condition]",
       "[--metadata-input other_object.rds] [--metadata-input-columns col1,col2] [--metadata-prefix ext_]",
       "[--assay SCT] [--genes GENE1,GENE2] [--top-genes 200] [--lightweight] [--neighbor-mode spatial] [--neighbor-graph SCT_snn] [--neighbor-k 6] [--inspect] [--inspect-genes]",
@@ -51,7 +52,7 @@ if (isTRUE(options$help) || is.null(options$input)) {
     ),
     "\n"
   )
-  quit(save = "no", status = if (is.null(options$input)) 1L else 0L)
+  quit(save = "no", status = if (isTRUE(options$help)) 0L else 1L)
 }
 
 split_csv <- function(value) {
@@ -351,7 +352,7 @@ filter_gene_names <- function(gene_names, query = NULL) {
     return(gene_names)
   }
 
-  keep <- grepl(query, gene_names, ignore.case = TRUE, fixed = TRUE)
+  keep <- grepl(tolower(query), tolower(gene_names), fixed = TRUE)
   gene_names[keep]
 }
 
@@ -366,41 +367,82 @@ format_gene_preview <- function(gene_names, limit = 50L) {
   paste(preview, collapse = ", ")
 }
 
-input_path <- normalizePath(options$input, mustWork = TRUE)
-metadata_input_path <- options[["metadata-input"]]
+config_source_path <- if (!is.null(options$config)) {
+  normalizePath(options$config, mustWork = TRUE)
+} else {
+  NULL
+}
+base_config <- if (!is.null(config_source_path)) {
+  read_karospace_build_config(config_source_path)
+} else {
+  list(version = 1L)
+}
+
+input_path <- if (!is.null(options$input)) {
+  normalizePath(options$input, mustWork = TRUE)
+} else {
+  base_config$input
+}
+if (is.null(input_path)) {
+  stop("Could not resolve an input path. Pass --input or --config.")
+}
+
+metadata_input_path <- if (!is.null(options[["metadata-input"]])) {
+  normalizePath(options[["metadata-input"]], mustWork = TRUE)
+} else {
+  base_config$metadata_input
+}
+metadata_input_columns <- if (!is.null(options[["metadata-input-columns"]])) {
+  split_csv(options[["metadata-input-columns"]])
+} else {
+  base_config$metadata_input_columns
+}
+metadata_prefix <- options[["metadata-prefix"]] %||% base_config$metadata_prefix
 obj <- prepare_karospace_input(
   input = input_path,
   metadata_input = metadata_input_path,
-  metadata_input_columns = split_csv(options[["metadata-input-columns"]]),
-  metadata_prefix = options[["metadata-prefix"]]
+  metadata_input_columns = metadata_input_columns,
+  metadata_prefix = metadata_prefix
 )
 obs <- extract_obs(obj)
 available_assays <- extract_assay_names(obj)
 available_graphs <- extract_graph_names(obj)
-neighbor_mode <- options[["neighbor-mode"]] %||% "spatial"
-neighbor_graph <- options[["neighbor-graph"]]
-neighbor_k <- suppressWarnings(as.integer(options[["neighbor-k"]] %||% 6L))
+neighbor_mode <- options[["neighbor-mode"]] %||% base_config$neighbor_mode %||% "spatial"
+neighbor_graph <- options[["neighbor-graph"]] %||% base_config$neighbor_graph
+neighbor_k <- suppressWarnings(as.integer(
+  if (!is.null(options[["neighbor-k"]])) {
+    options[["neighbor-k"]]
+  } else {
+    base_config$neighbor_k %||% 6L
+  }
+))
 if (is.na(neighbor_k) || neighbor_k < 1L) {
   neighbor_k <- 6L
 }
 merge_report <- report_metadata_merge(obj, obs)
 
-groupby <- options$groupby %||% detect_groupby(obs)
-initial_color <- options[["initial-color"]] %||% detect_initial_color(obs, groupby)
-assay_name <- options[["assay"]] %||% detect_assay(obj)
-top_genes_n <- if (is.null(options[["top-genes"]])) {
-  NULL
+groupby <- options$groupby %||% base_config$groupby %||% detect_groupby(obs)
+initial_color <- options[["initial-color"]] %||% base_config$initial_color %||% detect_initial_color(obs, groupby)
+assay_name <- options[["assay"]] %||% base_config$assay %||% detect_assay(obj)
+genes <- if (!is.null(options$genes)) {
+  split_csv(options$genes)
 } else {
+  base_config$genes
+}
+top_genes_n <- if (!is.null(options[["top-genes"]])) {
   suppressWarnings(as.integer(options[["top-genes"]]))
+} else {
+  base_config$top_genes_n
 }
 if (!is.null(options[["top-genes"]]) && (is.na(top_genes_n) || top_genes_n < 1L)) {
   stop("--top-genes must be a positive integer.")
 }
-if (!is.null(options[["genes"]]) && nzchar(options[["genes"]]) && length(top_genes_n) > 0L) {
+if (!is.null(genes) && length(top_genes_n) > 0L) {
   warning("--top-genes is ignored because --genes was provided explicitly.", call. = FALSE)
   top_genes_n <- NULL
 }
 additional_colors <- split_csv(options[["additional-colors"]]) %||%
+  base_config$additional_colors %||%
   detect_additional_colors(obs, groupby, initial_color)
 missing_additional_colors <- setdiff(additional_colors %||% character(), names(obs))
 if (length(missing_additional_colors) > 0L) {
@@ -411,49 +453,169 @@ if (length(missing_additional_colors) > 0L) {
   )
   additional_colors <- setdiff(additional_colors, missing_additional_colors)
 }
-output_path <- options$output %||% default_output_path(input_path)
-title <- options$title %||% tools::file_path_sans_ext(basename(input_path))
-theme <- options$theme %||% "light"
-lightweight <- parse_bool_option(options[["lightweight"]], default = FALSE)
+output_path <- if (!is.null(options$output)) {
+  resolve_output_path(options$output)
+} else {
+  base_config$output %||% default_output_path(input_path)
+}
+title <- options$title %||% base_config$title %||% tools::file_path_sans_ext(basename(input_path))
+theme <- options$theme %||% base_config$theme %||% "light"
+lightweight <- if (!is.null(options[["lightweight"]])) {
+  parse_bool_option(options[["lightweight"]], default = FALSE)
+} else {
+  isTRUE(base_config$lightweight %||% FALSE)
+}
 marker_genes_groupby <- split_csv(options[["marker-genes-groupby"]]) %||%
+  base_config$marker_genes_groupby %||%
   if (isTRUE(lightweight)) "none" else "auto"
-marker_genes_top_n <- suppressWarnings(as.integer(options[["marker-genes-top-n"]] %||% 20L))
+marker_genes_top_n <- suppressWarnings(as.integer(
+  if (!is.null(options[["marker-genes-top-n"]])) {
+    options[["marker-genes-top-n"]]
+  } else {
+    base_config$marker_genes_top_n %||% 20L
+  }
+))
 if (is.na(marker_genes_top_n) || marker_genes_top_n < 1L) {
   marker_genes_top_n <- 20L
 }
-interaction_markers_groupby <- split_csv(options[["interaction-markers-groupby"]])
+interaction_markers_groupby <- if (!is.null(options[["interaction-markers-groupby"]])) {
+  split_csv(options[["interaction-markers-groupby"]])
+} else {
+  base_config$interaction_markers_groupby
+}
 if (isTRUE(lightweight) && is.null(options[["interaction-markers-groupby"]])) {
   interaction_markers_groupby <- "none"
 }
-interaction_markers_top_targets <- suppressWarnings(as.integer(options[["interaction-markers-top-targets"]] %||% 8L))
+interaction_markers_top_targets <- suppressWarnings(as.integer(
+  if (!is.null(options[["interaction-markers-top-targets"]])) {
+    options[["interaction-markers-top-targets"]]
+  } else {
+    base_config$interaction_markers_top_targets %||% 8L
+  }
+))
 if (is.na(interaction_markers_top_targets) || interaction_markers_top_targets < 1L) {
   interaction_markers_top_targets <- 8L
 }
-interaction_markers_top_genes <- suppressWarnings(as.integer(options[["interaction-markers-top-genes"]] %||% 12L))
+interaction_markers_top_genes <- suppressWarnings(as.integer(
+  if (!is.null(options[["interaction-markers-top-genes"]])) {
+    options[["interaction-markers-top-genes"]]
+  } else {
+    base_config$interaction_markers_top_genes %||% 12L
+  }
+))
 if (is.na(interaction_markers_top_genes) || interaction_markers_top_genes < 1L) {
   interaction_markers_top_genes <- 12L
 }
-interaction_markers_min_cells <- suppressWarnings(as.integer(options[["interaction-markers-min-cells"]] %||% 30L))
+interaction_markers_min_cells <- suppressWarnings(as.integer(
+  if (!is.null(options[["interaction-markers-min-cells"]])) {
+    options[["interaction-markers-min-cells"]]
+  } else {
+    base_config$interaction_markers_min_cells %||% 30L
+  }
+))
 if (is.na(interaction_markers_min_cells) || interaction_markers_min_cells < 2L) {
   interaction_markers_min_cells <- 30L
 }
-interaction_markers_min_neighbors <- suppressWarnings(as.integer(options[["interaction-markers-min-neighbors"]] %||% 1L))
+interaction_markers_min_neighbors <- suppressWarnings(as.integer(
+  if (!is.null(options[["interaction-markers-min-neighbors"]])) {
+    options[["interaction-markers-min-neighbors"]]
+  } else {
+    base_config$interaction_markers_min_neighbors %||% 1L
+  }
+))
 if (is.na(interaction_markers_min_neighbors) || interaction_markers_min_neighbors < 1L) {
   interaction_markers_min_neighbors <- 1L
 }
-marker_test <- tolower(trimws(options[["marker-test"]] %||% "mean_diff"))
+marker_test <- tolower(trimws(options[["marker-test"]] %||% base_config$marker_test %||% "mean_diff"))
 if (!marker_test %in% c("mean_diff", "wilcoxon")) {
   warning("Unknown --marker-test value '", marker_test, "'. Falling back to 'mean_diff'.", call. = FALSE)
   marker_test <- "mean_diff"
 }
-neighbor_stats_permutations <- suppressWarnings(as.integer(options[["neighbor-stats-permutations"]] %||% 0L))
+neighbor_stats_permutations <- suppressWarnings(as.integer(
+  if (!is.null(options[["neighbor-stats-permutations"]])) {
+    options[["neighbor-stats-permutations"]]
+  } else {
+    base_config$neighbor_stats_permutations %||% 0L
+  }
+))
 if (is.na(neighbor_stats_permutations) || neighbor_stats_permutations < 0L) {
   neighbor_stats_permutations <- 0L
 }
-neighbor_stats_seed <- suppressWarnings(as.integer(options[["neighbor-stats-seed"]] %||% 42L))
+neighbor_stats_seed <- suppressWarnings(as.integer(
+  if (!is.null(options[["neighbor-stats-seed"]])) {
+    options[["neighbor-stats-seed"]]
+  } else {
+    base_config$neighbor_stats_seed %||% 42L
+  }
+))
 if (is.na(neighbor_stats_seed)) {
   neighbor_stats_seed <- 42L
 }
+metadata_columns <- if (!is.null(options[["metadata-columns"]])) {
+  split_csv(options[["metadata-columns"]])
+} else {
+  base_config$metadata_columns
+}
+outline_by <- options[["outline-by"]] %||% base_config$outline_by
+min_panel_size <- suppressWarnings(as.numeric(
+  if (!is.null(options[["min-panel-size"]])) {
+    options[["min-panel-size"]]
+  } else {
+    base_config$min_panel_size %||% 150
+  }
+))
+if (is.na(min_panel_size) || min_panel_size < 1) {
+  min_panel_size <- 150
+}
+spot_size <- suppressWarnings(as.numeric(
+  if (!is.null(options[["spot-size"]])) {
+    options[["spot-size"]]
+  } else {
+    base_config$spot_size %||% 2
+  }
+))
+if (is.na(spot_size) || spot_size < 0) {
+  spot_size <- 2
+}
+
+resolved_config <- normalize_karospace_build_config(
+  config = list(
+    version = 1L,
+    input = input_path,
+    output = output_path,
+    groupby = groupby,
+    initial_color = initial_color,
+    additional_colors = additional_colors,
+    genes = genes,
+    top_genes_n = top_genes_n,
+    assay = assay_name,
+    metadata_input = metadata_input_path,
+    metadata_input_columns = metadata_input_columns,
+    metadata_prefix = metadata_prefix,
+    neighbor_mode = neighbor_mode,
+    neighbor_graph = neighbor_graph,
+    neighbor_k = neighbor_k,
+    metadata_columns = metadata_columns,
+    outline_by = outline_by,
+    lightweight = lightweight,
+    marker_genes_groupby = marker_genes_groupby,
+    marker_genes_top_n = marker_genes_top_n,
+    interaction_markers_groupby = interaction_markers_groupby,
+    interaction_markers_top_targets = interaction_markers_top_targets,
+    interaction_markers_top_genes = interaction_markers_top_genes,
+    interaction_markers_min_cells = interaction_markers_min_cells,
+    interaction_markers_min_neighbors = interaction_markers_min_neighbors,
+    marker_test = marker_test,
+    neighbor_stats_permutations = neighbor_stats_permutations,
+    neighbor_stats_seed = neighbor_stats_seed,
+    title = title,
+    theme = theme,
+    min_panel_size = min_panel_size,
+    spot_size = spot_size
+  ),
+  require_required = TRUE,
+  resolve_paths = FALSE
+)
 phase4_color_columns <- unique(c(initial_color, additional_colors %||% character()))
 phase4_color_columns <- intersect(phase4_color_columns, names(obs))
 phase4_color_data <- lapply(phase4_color_columns, function(column_name) build_color_column(obs[[column_name]]))
@@ -475,6 +637,9 @@ if (!is.null(metadata_input_path) && nzchar(metadata_input_path)) {
     "\n",
     sep = ""
   )
+}
+if (!is.null(config_source_path)) {
+  cat("Config: ", config_source_path, "\n", sep = "")
 }
 cat("Detected groupby: ", groupby, "\n", sep = "")
 cat("Detected initial color: ", initial_color, "\n", sep = "")
@@ -511,6 +676,19 @@ cat(
   sep = ""
 )
 cat("Output: ", normalizePath(output_path, mustWork = FALSE), "\n", sep = "")
+
+if (!is.null(options[["write-config"]])) {
+  write_karospace_build_config(
+    config = resolved_config,
+    path = options[["write-config"]]
+  )
+  cat(
+    "Config written to ",
+    normalizePath(options[["write-config"]], mustWork = FALSE),
+    "\n",
+    sep = ""
+  )
+}
 
 categorical_cols <- names(obs)[vapply(obs, function(column) {
   is.factor(column) || is.character(column) || is.logical(column)
@@ -587,36 +765,36 @@ if (isTRUE(options$inspect) || isTRUE(options[["inspect-genes"]])) {
 
 export_karospace_viewer(
   input = obj,
-  output_path = output_path,
-  groupby = groupby,
-  initial_color = initial_color,
-  additional_colors = additional_colors,
-  genes = split_csv(options$genes),
-  top_genes_n = top_genes_n,
-  assay = assay_name,
+  output_path = resolved_config$output,
+  groupby = resolved_config$groupby,
+  initial_color = resolved_config$initial_color,
+  additional_colors = resolved_config$additional_colors,
+  genes = resolved_config$genes,
+  top_genes_n = resolved_config$top_genes_n,
+  assay = resolved_config$assay,
   metadata_input = NULL,
   metadata_input_columns = NULL,
   metadata_prefix = NULL,
-  neighbor_mode = neighbor_mode,
-  neighbor_graph = neighbor_graph,
-  neighbor_k = neighbor_k,
-  metadata_columns = split_csv(options[["metadata-columns"]]),
-  outline_by = options[["outline-by"]],
-  lightweight = lightweight,
-  marker_genes_groupby = marker_genes_groupby,
-  marker_genes_top_n = marker_genes_top_n,
-  interaction_markers_groupby = interaction_markers_groupby,
-  interaction_markers_top_targets = interaction_markers_top_targets,
-  interaction_markers_top_genes = interaction_markers_top_genes,
-  interaction_markers_min_cells = interaction_markers_min_cells,
-  interaction_markers_min_neighbors = interaction_markers_min_neighbors,
-  marker_test = marker_test,
-  neighbor_stats_permutations = neighbor_stats_permutations,
-  neighbor_stats_seed = neighbor_stats_seed,
-  title = title,
-  theme = theme,
-  min_panel_size = as.numeric(options[["min-panel-size"]] %||% 150),
-  spot_size = as.numeric(options[["spot-size"]] %||% 2)
+  neighbor_mode = resolved_config$neighbor_mode,
+  neighbor_graph = resolved_config$neighbor_graph,
+  neighbor_k = resolved_config$neighbor_k,
+  metadata_columns = resolved_config$metadata_columns,
+  outline_by = resolved_config$outline_by,
+  lightweight = resolved_config$lightweight,
+  marker_genes_groupby = resolved_config$marker_genes_groupby,
+  marker_genes_top_n = resolved_config$marker_genes_top_n,
+  interaction_markers_groupby = resolved_config$interaction_markers_groupby,
+  interaction_markers_top_targets = resolved_config$interaction_markers_top_targets,
+  interaction_markers_top_genes = resolved_config$interaction_markers_top_genes,
+  interaction_markers_min_cells = resolved_config$interaction_markers_min_cells,
+  interaction_markers_min_neighbors = resolved_config$interaction_markers_min_neighbors,
+  marker_test = resolved_config$marker_test,
+  neighbor_stats_permutations = resolved_config$neighbor_stats_permutations,
+  neighbor_stats_seed = resolved_config$neighbor_stats_seed,
+  title = resolved_config$title,
+  theme = resolved_config$theme,
+  min_panel_size = resolved_config$min_panel_size,
+  spot_size = resolved_config$spot_size
 )
 
-cat("Viewer written to ", normalizePath(output_path, mustWork = FALSE), "\n", sep = "")
+cat("Viewer written to ", normalizePath(resolved_config$output, mustWork = FALSE), "\n", sep = "")

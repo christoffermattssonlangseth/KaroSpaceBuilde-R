@@ -2,6 +2,7 @@ source("R/helpers.R")
 source("R/source.R")
 source("R/payload.R")
 source("R/export.R")
+source("R/inspect.R")
 
 set.seed(7)
 n_cells <- 60
@@ -256,5 +257,54 @@ stopifnot(grepl("section_a", html, fixed = TRUE))
 stopifnot(grepl("Gene01", html, fixed = TRUE))
 stopifnot(grepl("marker_genes", html, fixed = TRUE))
 stopifnot(grepl("interaction_markers", html, fixed = TRUE))
+
+config_dir <- tempfile("karospacer-config-")
+dir.create(config_dir, recursive = TRUE, showWarnings = FALSE)
+config_input_path <- file.path(config_dir, "toy_input.rds")
+config_output_path <- file.path(config_dir, "toy_from_config.html")
+config_path <- file.path(config_dir, "build.json")
+saveRDS(merged_toy, config_input_path)
+
+write_karospace_build_config(
+  config = list(
+    version = 1L,
+    input = config_input_path,
+    output = config_output_path,
+    groupby = "sample_id",
+    initial_color = "cell_type",
+    additional_colors = c("course", "seurat_clusters"),
+    genes = c("Gene01", "Gene02"),
+    neighbor_mode = "existing",
+    marker_genes_groupby = "auto",
+    marker_test = "wilcoxon",
+    neighbor_stats_permutations = 5L,
+    neighbor_stats_seed = 1L,
+    title = "Config Viewer"
+  ),
+  path = config_path
+)
+read_config <- read_karospace_build_config(config_path)
+stopifnot(identical(read_config$groupby, "sample_id"))
+stopifnot(identical(read_config$initial_color, "cell_type"))
+stopifnot(identical(read_config$output, normalizePath(config_output_path, mustWork = FALSE)))
+
+export_karospace_viewer_from_config(config_path)
+config_html <- paste(readLines(config_output_path, warn = FALSE, encoding = "UTF-8"), collapse = "\n")
+stopifnot(grepl("Config Viewer", config_html, fixed = TRUE))
+stopifnot(grepl("Gene01", config_html, fixed = TRUE))
+stopifnot(grepl("neighbor_stats", config_html, fixed = TRUE))
+
+inspect_summary <- inspect_karospace_input(
+  input = config_input_path,
+  gene_query = "Gene01",
+  gene_limit = 2L
+)
+stopifnot(identical(inspect_summary$defaults$groupby, "sample_id"))
+stopifnot(identical(inspect_summary$defaults$initial_color, "cell_type"))
+stopifnot(identical(inspect_summary$defaults$neighbor_mode, "spatial"))
+stopifnot(isTRUE(inspect_summary$genes$matched_count == 1L))
+stopifnot(identical(inspect_summary$default_config$groupby, "sample_id"))
+stopifnot(is.list(inspect_summary$default_config$marker_genes_groupby))
+stopifnot(identical(unlist(inspect_summary$default_config$marker_genes_groupby, use.names = FALSE), "auto"))
 
 cat("smoke_export: ok\n")

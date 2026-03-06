@@ -1,5 +1,9 @@
 export(build_viewer_payload)
 export(export_karospace_viewer)
+export(export_karospace_viewer_from_config)
+export(inspect_karospace_input)
+export(normalize_karospace_build_config)
 export(read_karospace_source)
+export(read_karospace_build_config)
 export(render_viewer_html)
-
+export(write_karospace_build_config)

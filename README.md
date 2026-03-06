@@ -39,6 +39,78 @@ Rscript scripts/karospace_build_r.R \
   --marker-genes-groupby auto
 ```
 
+## Config-File Workflow
+
+The recommended backend contract for future automation or a desktop wrapper is a JSON build config.
+
+The recommended discovery contract is a machine-readable inspect command:
+
+```bash
+Rscript scripts/karospace_inspect_r.R \
+  --input path/to/object.rds \
+  --output inspect.json
+```
+
+That JSON includes:
+
+- detected defaults such as `groupby`, `initial_color`, `additional_colors`, and `assay`
+- available assays and Seurat graph names
+- categorical and numeric metadata columns
+- gene counts and a preview
+- a `default_config` object that can be written directly to the build step
+
+For a future desktop app, the intended flow is:
+
+1. call `karospace_inspect_r.R`
+2. let the user edit the returned `default_config`
+3. call `karospace_build_r.R --config build.json`
+
+Generate a resolved config from a real dataset with auto-detected defaults:
+
+```bash
+Rscript scripts/example_export.R \
+  --input path/to/object.rds \
+  --write-config build.json \
+  --inspect
+```
+
+That writes a versioned JSON config with explicit export settings.
+
+Run the export from that config:
+
+```bash
+Rscript scripts/karospace_build_r.R --config build.json
+```
+
+You can still override individual fields at run time:
+
+```bash
+Rscript scripts/karospace_build_r.R \
+  --config build.json \
+  --output viewer_alt.html \
+  --top-genes 300 \
+  --write-config build_resolved.json
+```
+
+Config fields use snake_case and map directly to the exporter API, for example:
+
+```json
+{
+  "version": 1,
+  "input": "/path/to/object.rds",
+  "output": "/path/to/viewer.html",
+  "groupby": "orig.ident",
+  "initial_color": "seurat_clusters",
+  "additional_colors": ["integrated_snn_res.0.47"],
+  "assay": "SCT",
+  "top_genes_n": 200,
+  "neighbor_mode": "spatial",
+  "marker_genes_groupby": ["auto"],
+  "interaction_markers_groupby": ["seurat_clusters"],
+  "title": "IntegratedHeartST"
+}
+```
+
 ## Fastest Real-Dataset Test
 
 If you just want to try one of your real `.rds` files with minimal setup, run:

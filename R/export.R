@@ -212,3 +212,340 @@ export_karospace_viewer <- function(
     viewer_shell_path = viewer_shell_path
   )
 }
+
+karospace_build_config_keys <- function() {
+  c(
+    "version",
+    "input",
+    "output",
+    "groupby",
+    "initial_color",
+    "additional_colors",
+    "genes",
+    "top_genes_n",
+    "assay",
+    "metadata_input",
+    "metadata_input_columns",
+    "metadata_prefix",
+    "neighbor_mode",
+    "neighbor_graph",
+    "neighbor_k",
+    "metadata_columns",
+    "outline_by",
+    "lightweight",
+    "marker_genes_groupby",
+    "marker_genes_top_n",
+    "interaction_markers_groupby",
+    "interaction_markers_top_targets",
+    "interaction_markers_top_genes",
+    "interaction_markers_min_cells",
+    "interaction_markers_min_neighbors",
+    "marker_test",
+    "neighbor_stats_permutations",
+    "neighbor_stats_seed",
+    "title",
+    "theme",
+    "min_panel_size",
+    "spot_size"
+  )
+}
+
+karospace_config_scalar_character <- function(x, field, allow_null = TRUE) {
+  if (is.null(x) || length(x) == 0L) {
+    if (allow_null) {
+      return(NULL)
+    }
+    stop("Missing required config field: ", field)
+  }
+  value <- as.character(x)[[1L]]
+  if (!nzchar(value)) {
+    if (allow_null) {
+      return(NULL)
+    }
+    stop("Config field must be a non-empty string: ", field)
+  }
+  value
+}
+
+karospace_config_character_vector <- function(x) {
+  if (is.null(x) || length(x) == 0L) {
+    return(NULL)
+  }
+  values <- as.character(x)
+  values <- values[nzchar(values)]
+  if (length(values) == 0L) {
+    return(NULL)
+  }
+  unname(values)
+}
+
+karospace_config_scalar_integer <- function(x, field, allow_null = TRUE, min_value = NULL) {
+  if (is.null(x) || length(x) == 0L) {
+    if (allow_null) {
+      return(NULL)
+    }
+    stop("Missing required config field: ", field)
+  }
+  value <- suppressWarnings(as.integer(x[[1L]]))
+  if (is.na(value)) {
+    stop("Config field must be an integer: ", field)
+  }
+  if (!is.null(min_value) && value < min_value) {
+    stop("Config field must be >= ", min_value, ": ", field)
+  }
+  value
+}
+
+karospace_config_scalar_numeric <- function(x, field, allow_null = TRUE, min_value = NULL) {
+  if (is.null(x) || length(x) == 0L) {
+    if (allow_null) {
+      return(NULL)
+    }
+    stop("Missing required config field: ", field)
+  }
+  value <- suppressWarnings(as.numeric(x[[1L]]))
+  if (is.na(value)) {
+    stop("Config field must be numeric: ", field)
+  }
+  if (!is.null(min_value) && value < min_value) {
+    stop("Config field must be >= ", min_value, ": ", field)
+  }
+  value
+}
+
+karospace_config_scalar_logical <- function(x, field, allow_null = TRUE) {
+  if (is.null(x) || length(x) == 0L) {
+    if (allow_null) {
+      return(NULL)
+    }
+    stop("Missing required config field: ", field)
+  }
+
+  value <- x[[1L]]
+  if (is.logical(value)) {
+    return(isTRUE(value))
+  }
+
+  normalized <- tolower(trimws(as.character(value)))
+  if (normalized %in% c("true", "t", "1", "yes", "y", "on")) {
+    return(TRUE)
+  }
+  if (normalized %in% c("false", "f", "0", "no", "n", "off")) {
+    return(FALSE)
+  }
+
+  stop("Config field must be boolean: ", field)
+}
+
+resolve_config_path_value <- function(path_value, base_dir = NULL, must_exist = FALSE) {
+  if (is.null(path_value) || !nzchar(path_value)) {
+    return(NULL)
+  }
+
+  resolved <- path_value
+  if (!grepl("^(/|[A-Za-z]:[/\\\\]|~)", resolved) && !is.null(base_dir)) {
+    resolved <- file.path(base_dir, resolved)
+  }
+
+  if (must_exist) {
+    return(normalizePath(resolved, mustWork = TRUE))
+  }
+
+  normalizePath(resolved, mustWork = FALSE)
+}
+
+normalize_karospace_build_config <- function(
+  config,
+  config_path = NULL,
+  require_required = FALSE,
+  resolve_paths = TRUE
+) {
+  if (is.character(config) && length(config) == 1L && file.exists(config)) {
+    return(read_karospace_build_config(config))
+  }
+  if (!is.list(config)) {
+    stop("Build config must be a named list or a JSON config path.")
+  }
+
+  config_names <- names(config) %||% character()
+  if (length(config_names) == 0L) {
+    stop("Build config must be a named list.")
+  }
+
+  unknown_fields <- setdiff(config_names, karospace_build_config_keys())
+  if (length(unknown_fields) > 0L) {
+    stop("Unsupported build config fields: ", paste(sort(unknown_fields), collapse = ", "))
+  }
+
+  base_dir <- NULL
+  if (!is.null(config_path)) {
+    base_dir <- dirname(normalizePath(config_path, mustWork = FALSE))
+  }
+
+  normalized <- list(
+    version = karospace_config_scalar_integer(config$version %||% 1L, "version", allow_null = FALSE, min_value = 1L),
+    input = karospace_config_scalar_character(config$input, "input", allow_null = !require_required),
+    output = karospace_config_scalar_character(config$output, "output", allow_null = !require_required),
+    groupby = karospace_config_scalar_character(config$groupby, "groupby", allow_null = !require_required),
+    initial_color = karospace_config_scalar_character(config$initial_color, "initial_color", allow_null = !require_required),
+    additional_colors = karospace_config_character_vector(config$additional_colors),
+    genes = karospace_config_character_vector(config$genes),
+    top_genes_n = karospace_config_scalar_integer(config$top_genes_n, "top_genes_n", allow_null = TRUE, min_value = 1L),
+    assay = karospace_config_scalar_character(config$assay, "assay", allow_null = TRUE),
+    metadata_input = karospace_config_scalar_character(config$metadata_input, "metadata_input", allow_null = TRUE),
+    metadata_input_columns = karospace_config_character_vector(config$metadata_input_columns),
+    metadata_prefix = karospace_config_scalar_character(config$metadata_prefix, "metadata_prefix", allow_null = TRUE),
+    neighbor_mode = karospace_config_scalar_character(config$neighbor_mode %||% "spatial", "neighbor_mode", allow_null = FALSE),
+    neighbor_graph = karospace_config_scalar_character(config$neighbor_graph, "neighbor_graph", allow_null = TRUE),
+    neighbor_k = karospace_config_scalar_integer(config$neighbor_k %||% 6L, "neighbor_k", allow_null = FALSE, min_value = 1L),
+    metadata_columns = karospace_config_character_vector(config$metadata_columns),
+    outline_by = karospace_config_scalar_character(config$outline_by, "outline_by", allow_null = TRUE),
+    lightweight = karospace_config_scalar_logical(config$lightweight %||% FALSE, "lightweight", allow_null = FALSE),
+    marker_genes_groupby = karospace_config_character_vector(config$marker_genes_groupby),
+    marker_genes_top_n = karospace_config_scalar_integer(config$marker_genes_top_n %||% 20L, "marker_genes_top_n", allow_null = FALSE, min_value = 1L),
+    interaction_markers_groupby = karospace_config_character_vector(config$interaction_markers_groupby),
+    interaction_markers_top_targets = karospace_config_scalar_integer(config$interaction_markers_top_targets %||% 8L, "interaction_markers_top_targets", allow_null = FALSE, min_value = 1L),
+    interaction_markers_top_genes = karospace_config_scalar_integer(config$interaction_markers_top_genes %||% 12L, "interaction_markers_top_genes", allow_null = FALSE, min_value = 1L),
+    interaction_markers_min_cells = karospace_config_scalar_integer(config$interaction_markers_min_cells %||% 30L, "interaction_markers_min_cells", allow_null = FALSE, min_value = 2L),
+    interaction_markers_min_neighbors = karospace_config_scalar_integer(config$interaction_markers_min_neighbors %||% 1L, "interaction_markers_min_neighbors", allow_null = FALSE, min_value = 1L),
+    marker_test = tolower(karospace_config_scalar_character(config$marker_test %||% "mean_diff", "marker_test", allow_null = FALSE)),
+    neighbor_stats_permutations = karospace_config_scalar_integer(config$neighbor_stats_permutations %||% 0L, "neighbor_stats_permutations", allow_null = FALSE, min_value = 0L),
+    neighbor_stats_seed = karospace_config_scalar_integer(config$neighbor_stats_seed %||% 42L, "neighbor_stats_seed", allow_null = FALSE),
+    title = karospace_config_scalar_character(config$title, "title", allow_null = TRUE),
+    theme = karospace_config_scalar_character(config$theme %||% "light", "theme", allow_null = FALSE),
+    min_panel_size = karospace_config_scalar_numeric(config$min_panel_size %||% 150, "min_panel_size", allow_null = FALSE, min_value = 1),
+    spot_size = karospace_config_scalar_numeric(config$spot_size %||% 2, "spot_size", allow_null = FALSE, min_value = 0)
+  )
+
+  if (normalized$version != 1L) {
+    stop("Unsupported build config version: ", normalized$version, ". Expected version 1.")
+  }
+  if (!normalized$neighbor_mode %in% c("spatial", "existing", "auto", "none")) {
+    stop("Unsupported neighbor_mode in build config: ", normalized$neighbor_mode)
+  }
+  if (!normalized$marker_test %in% c("mean_diff", "wilcoxon")) {
+    stop("Unsupported marker_test in build config: ", normalized$marker_test)
+  }
+  if (!normalized$theme %in% c("light", "dark")) {
+    stop("Unsupported theme in build config: ", normalized$theme)
+  }
+  if (!is.null(normalized$genes) && !is.null(normalized$top_genes_n)) {
+    warning("top_genes_n is ignored because genes was provided explicitly.", call. = FALSE)
+    normalized$top_genes_n <- NULL
+  }
+
+  if (isTRUE(resolve_paths)) {
+    normalized$input <- resolve_config_path_value(normalized$input, base_dir = base_dir, must_exist = !is.null(normalized$input))
+    normalized$output <- resolve_config_path_value(normalized$output, base_dir = base_dir, must_exist = FALSE)
+    normalized$metadata_input <- resolve_config_path_value(
+      normalized$metadata_input,
+      base_dir = base_dir,
+      must_exist = !is.null(normalized$metadata_input)
+    )
+  }
+
+  normalized
+}
+
+read_karospace_build_config <- function(path) {
+  config_path <- normalizePath(path, mustWork = TRUE)
+  config <- jsonlite::fromJSON(config_path, simplifyVector = TRUE)
+  normalize_karospace_build_config(
+    config = config,
+    config_path = config_path,
+    require_required = FALSE,
+    resolve_paths = TRUE
+  )
+}
+
+write_karospace_build_config <- function(config, path) {
+  config_path <- resolve_output_path(path)
+  normalized <- normalize_karospace_build_config(
+    config = config,
+    require_required = FALSE,
+    resolve_paths = FALSE
+  )
+  json_ready <- karospace_build_config_for_json(normalized)
+  json <- jsonlite::toJSON(
+    json_ready,
+    auto_unbox = TRUE,
+    null = "null",
+    na = "null",
+    digits = NA,
+    pretty = TRUE
+  )
+  writeLines(json, con = config_path, useBytes = TRUE)
+  invisible(config_path)
+}
+
+karospace_build_config_for_json <- function(config) {
+  normalized <- normalize_karospace_build_config(
+    config = config,
+    require_required = FALSE,
+    resolve_paths = FALSE
+  )
+  array_fields <- c(
+    "additional_colors",
+    "genes",
+    "metadata_input_columns",
+    "metadata_columns",
+    "marker_genes_groupby",
+    "interaction_markers_groupby"
+  )
+  json_ready <- normalized
+  for (field in array_fields) {
+    if (!is.null(json_ready[[field]])) {
+      json_ready[[field]] <- unname(as.list(json_ready[[field]]))
+    }
+  }
+  json_ready
+}
+
+export_karospace_viewer_from_config <- function(config, config_path = NULL) {
+  normalized <- if (is.character(config) && length(config) == 1L && file.exists(config)) {
+    read_karospace_build_config(config)
+  } else {
+    normalize_karospace_build_config(
+      config = config,
+      config_path = config_path,
+      require_required = TRUE,
+      resolve_paths = TRUE
+    )
+  }
+
+  export_karospace_viewer(
+    input = normalized$input,
+    output_path = normalized$output,
+    groupby = normalized$groupby,
+    initial_color = normalized$initial_color,
+    additional_colors = normalized$additional_colors,
+    genes = normalized$genes,
+    top_genes_n = normalized$top_genes_n,
+    assay = normalized$assay,
+    metadata_input = normalized$metadata_input,
+    metadata_input_columns = normalized$metadata_input_columns,
+    metadata_prefix = normalized$metadata_prefix,
+    neighbor_mode = normalized$neighbor_mode,
+    neighbor_graph = normalized$neighbor_graph,
+    neighbor_k = normalized$neighbor_k,
+    metadata_columns = normalized$metadata_columns,
+    outline_by = normalized$outline_by,
+    lightweight = normalized$lightweight,
+    marker_genes_groupby = normalized$marker_genes_groupby,
+    marker_genes_top_n = normalized$marker_genes_top_n,
+    interaction_markers_groupby = normalized$interaction_markers_groupby,
+    interaction_markers_top_targets = normalized$interaction_markers_top_targets,
+    interaction_markers_top_genes = normalized$interaction_markers_top_genes,
+    interaction_markers_min_cells = normalized$interaction_markers_min_cells,
+    interaction_markers_min_neighbors = normalized$interaction_markers_min_neighbors,
+    marker_test = normalized$marker_test,
+    neighbor_stats_permutations = normalized$neighbor_stats_permutations,
+    neighbor_stats_seed = normalized$neighbor_stats_seed,
+    title = normalized$title %||% "KaroSpace",
+    theme = normalized$theme,
+    min_panel_size = normalized$min_panel_size,
+    spot_size = normalized$spot_size
+  )
+
+  invisible(normalized$output)
+}
